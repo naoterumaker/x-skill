@@ -210,10 +210,29 @@ x-skill/
     └── YYYY-MM-DD/
 ```
 
-## ベース
+## 原作と魔改造の差分
 
-[rohunvora/x-research-skill](https://github.com/rohunvora/x-research-skill) をベースに、Agent Team アーキテクチャ・自動ノイズ検出・MD バズ分析レポート生成等を追加。
+本リポジトリは [rohunvora/x-research-skill](https://github.com/rohunvora/x-research-skill) を**魔改造**したものです。
+
+**原作（rohunvora/x-research-skill）:**
+- X API v2 の検索・プロフィール・スレッド取得 CLI
+- キャッシュ、コスト表示、ウォッチリスト機能
+
+**本リポジトリで追加・改造した部分:**
+
+| 追加機能 | 内容 |
+|---------|------|
+| **Agent Team アーキテクチャ** | Coordinator（Opus）+ Subagent（Sonnet）による並列検索ワークフロー |
+| **generate_summary_md.py** | JSON → Markdown + xlsx バズ分析レポート生成（トピック分類・キーパーソン・アクションプラン・バズTOP10） |
+| **自動ノイズ検出** | 韓国語/ポルトガル語/スペイン語/アラビア語を自動検出＆除外（日本語は保護） |
+| **TOPIC_RULES** | キーワードベースの話題自動分類（短い英単語はワードバウンダリ対応） |
+| **トピック例の重複排除** | 同じツイートが複数トピックの例に使われない仕組み |
+| **SKILL.md 全面書き換え** | 6フェーズの Agent Team ワークフロー、モデル使い分け表、実行例 |
+| **generate_full_report.py** | 総合分析 xlsx（8シート構成） |
+| **generate_genz_report.py** | Z世代トレンド分析 xlsx |
+
+原作のライセンス（MIT）に基づき公開しています。原作者に感謝。
 
 ## ライセンス
 
-MIT
+MIT — Original work by [rohunvora](https://github.com/rohunvora/x-research-skill)
