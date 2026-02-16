@@ -700,10 +700,254 @@ def write_type_sheet(wb, all_tweets):
     auto_width(ws)
 
 
+def write_insights_sheet(wb, all_tweets, per_label):
+    """戦略的インサイト — データドリブンの分析シート"""
+    ws = wb.create_sheet("戦略的インサイト")
+    SECTION_FILL = PatternFill(start_color="2E75B6", end_color="2E75B6", fill_type="solid")
+    SECTION_FONT = Font(bold=True, color="FFFFFF", size=12)
+    INSIGHT_FONT = Font(bold=True, size=11)
+
+    def add_section(title):
+        ws.append([])
+        ws.append([title])
+        r = ws.max_row
+        ws.cell(r, 1).font = SECTION_FONT
+        ws.cell(r, 1).fill = SECTION_FILL
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+
+    def add_insight(label, value, detail=""):
+        ws.append([label, value, detail])
+        ws.cell(ws.max_row, 1).font = INSIGHT_FONT
+
+    # --- 全体概要 ---
+    total = len(all_tweets)
+    total_likes = sum(t["metrics"]["likes"] for t in all_tweets)
+    total_bmarks = sum(t["metrics"].get("bookmarks", 0) for t in all_tweets)
+    avg_likes = total_likes / max(total, 1)
+    overall_sr = total_bmarks / max(total_likes, 1)
+    top_tweet = max(all_tweets, key=lambda t: t["metrics"]["likes"]) if all_tweets else None
+
+    add_section("全体概要")
+    add_insight("総投稿数", total)
+    add_insight("合計いいね", total_likes)
+    add_insight("平均いいね", round(avg_likes, 1))
+    add_insight("全体保存率", f"{overall_sr:.1%}")
+    if top_tweet:
+        add_insight("最大バズ", f'{top_tweet["metrics"]["likes"]}L @{top_tweet.get("username", "?")}',
+                    get_display_text(top_tweet, 60))
+
+    # --- トピック強度ランキング ---
+    add_section("トピック強度ランキング")
+    ws.append(["トピック", "件数", "合計いいね", "平均いいね"])
+    style_header(ws, ws.max_row, 4)
+    topic_data = defaultdict(lambda: {"count": 0, "likes": 0})
+    for t in all_tweets:
+        for tp in detect_topics(t):
+            topic_data[tp]["count"] += 1
+            topic_data[tp]["likes"] += t["metrics"]["likes"]
+    for tp, d in sorted(topic_data.items(), key=lambda x: x[1]["likes"], reverse=True):
+        ws.append([tp, d["count"], d["likes"], round(d["likes"] / max(d["count"], 1), 1)])
+
+    # --- バズパターン分析 ---
+    add_section("バズパターン分析（バズ要因タグ別）")
+    ws.append(["バズ要因", "件数", "合計いいね", "平均いいね", "平均保存率"])
+    style_header(ws, ws.max_row, 5)
+    tag_data = defaultdict(lambda: {"count": 0, "likes": 0, "bmarks": 0})
+    for t in all_tweets:
+        for tag in tag_buzz_reason(t):
+            if tag == "—":
+                continue
+            tag_data[tag]["count"] += 1
+            tag_data[tag]["likes"] += t["metrics"]["likes"]
+            tag_data[tag]["bmarks"] += t["metrics"].get("bookmarks", 0)
+    for tag, d in sorted(tag_data.items(), key=lambda x: x[1]["likes"], reverse=True):
+        sr = d["bmarks"] / max(d["likes"], 1)
+        ws.append([tag, d["count"], d["likes"], round(d["likes"] / max(d["count"], 1), 1), sr])
+    for row in ws.iter_rows(min_row=ws.max_row - len(tag_data) + 1, max_row=ws.max_row):
+        if len(row) > 4:
+            row[4].number_format = PCT_FMT
+
+    # --- 保存率が高いコンテンツの特徴 ---
+    add_section("高保存率コンテンツ TOP10")
+    ws.append(["No", "ユーザー名", "いいね", "ブクマ", "保存率", "テキスト", "ポストURL"])
+    style_header(ws, ws.max_row, 7)
+    with_sr = [(t, t["metrics"].get("bookmarks", 0) / max(t["metrics"]["likes"], 1))
+               for t in all_tweets if t["metrics"]["likes"] >= 1]
+    with_sr.sort(key=lambda x: x[1], reverse=True)
+    for i, (t, sr) in enumerate(with_sr[:10], 1):
+        ws.append([i, f'@{t.get("username", "?")}', t["metrics"]["likes"],
+                   t["metrics"].get("bookmarks", 0), sr,
+                   get_display_text(t, 60), t.get("tweet_url", "")])
+    for row in ws.iter_rows(min_row=ws.max_row - min(len(with_sr), 10) + 1, max_row=ws.max_row):
+        if len(row) > 4:
+            row[4].number_format = PCT_FMT
+
+    # --- ラベル別比較 ---
+    if len(per_label) > 1:
+        add_section("クエリ別パフォーマンス比較")
+        ws.append(["ラベル", "件数", "合計いいね", "平均いいね", "保存率", "トップバズ"])
+        style_header(ws, ws.max_row, 6)
+        for label, tweets in per_label.items():
+            if not tweets:
+                continue
+            tl = sum(t["metrics"]["likes"] for t in tweets)
+            tb = sum(t["metrics"].get("bookmarks", 0) for t in tweets)
+            top = max(tweets, key=lambda t: t["metrics"]["likes"])
+            ws.append([label, len(tweets), tl, round(tl / len(tweets), 1),
+                       tb / max(tl, 1), f'{top["metrics"]["likes"]}L @{top.get("username", "?")}'])
+
+    # --- 勝ちパターン ---
+    add_section("勝ちパターン（データから読み取れる傾向）")
+    # 投稿タイプ別の平均いいね
+    type_avg = {}
+    by_type = defaultdict(list)
+    for t in all_tweets:
+        by_type[t.get("post_type", "text")].append(t)
+    for pt, tweets in by_type.items():
+        avg = sum(t["metrics"]["likes"] for t in tweets) / len(tweets)
+        type_avg[pt] = avg
+    if type_avg:
+        best_type = max(type_avg, key=type_avg.get)
+        add_insight("最強の投稿タイプ", POST_TYPE_LABELS.get(best_type, best_type),
+                    f"平均いいね {type_avg[best_type]:.0f}")
+    if topic_data:
+        best_topic = max(topic_data, key=lambda k: topic_data[k]["likes"])
+        add_insight("最も反応が強い話題", best_topic,
+                    f"合計 {topic_data[best_topic]['likes']}いいね")
+    if tag_data:
+        best_tag = max(tag_data, key=lambda k: tag_data[k]["likes"])
+        add_insight("最も効くバズ要因", best_tag,
+                    f"合計 {tag_data[best_tag]['likes']}いいね")
+    if with_sr:
+        avg_high_sr = sum(sr for _, sr in with_sr[:5]) / min(len(with_sr), 5)
+        add_insight("TOP5平均保存率", f"{avg_high_sr:.0%}",
+                    "保存率が高い = 実用・ハウツー系の需要")
+
+    ws.column_dimensions["A"].width = 25
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 50
+    ws.column_dimensions["D"].width = 20
+
+
+def write_buzz_efficiency_sheet(wb, all_tweets):
+    """バズ効率TOP15 — フォロワー比で最も効率よくバズった投稿"""
+    ws = wb.create_sheet("バズ効率TOP15")
+    headers = [
+        "No", "ユーザー名", "フォロワー", "いいね", "ブクマ", "バズ効率",
+        "保存率", "投稿タイプ", "バズ要因", "テキスト", "ポストURL",
+    ]
+    ws.append(headers)
+    style_header(ws, 1, len(headers))
+
+    scored = []
+    for t in all_tweets:
+        followers = t.get("author_followers", 0) or 0
+        if followers < 1:
+            continue
+        eff = t["metrics"]["likes"] / followers
+        scored.append((t, eff))
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    for i, (t, eff) in enumerate(scored[:15], 1):
+        m = t["metrics"]
+        sr = m.get("bookmarks", 0) / max(m["likes"], 1)
+        pt = POST_TYPE_LABELS.get(t.get("post_type", "text"), "?")
+        tags = ", ".join(tag_buzz_reason(t))
+        ws.append([
+            i, f'@{t.get("username", "?")}', t.get("author_followers", 0),
+            m["likes"], m.get("bookmarks", 0), eff, sr, pt, tags,
+            get_display_text(t, 80), t.get("tweet_url", ""),
+        ])
+
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        if len(row) > 6:
+            row[2].number_format = NUM_FMT
+            row[3].number_format = NUM_FMT
+            row[4].number_format = NUM_FMT
+            row[5].number_format = '0.00x'
+            row[6].number_format = PCT_FMT
+
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        try:
+            if row[5].value and float(row[5].value) >= 1.0:
+                for cell in row:
+                    cell.fill = GREEN_FILL
+        except (ValueError, TypeError):
+            pass
+
+    auto_width(ws)
+    ws.column_dimensions["J"].width = 60
+    ws.freeze_panes = "A2"
+
+
+def write_cross_tab_sheet(wb, all_tweets):
+    """トピック × 投稿タイプ クロス集計"""
+    ws = wb.create_sheet("クロス集計")
+
+    # 集計
+    cross = defaultdict(lambda: defaultdict(lambda: {"count": 0, "likes": 0}))
+    all_types = set()
+    all_topics = set()
+    for t in all_tweets:
+        pt = t.get("post_type", "text")
+        all_types.add(pt)
+        topics = detect_topics(t)
+        if not topics:
+            topics = ["（話題不明）"]
+        for tp in topics:
+            all_topics.add(tp)
+            cross[tp][pt]["count"] += 1
+            cross[tp][pt]["likes"] += t["metrics"]["likes"]
+
+    type_list = sorted(all_types)
+    topic_list = sorted(all_topics, key=lambda tp: sum(cross[tp][pt]["likes"] for pt in type_list), reverse=True)
+
+    # 件数マトリクス
+    ws.append([""])
+    ws.append(["【件数】"])
+    ws.cell(ws.max_row, 1).font = Font(bold=True, size=12)
+    headers = ["トピック"] + [POST_TYPE_LABELS.get(pt, pt) for pt in type_list] + ["合計"]
+    ws.append(headers)
+    style_header(ws, ws.max_row, len(headers))
+    for tp in topic_list:
+        row = [tp]
+        total = 0
+        for pt in type_list:
+            c = cross[tp][pt]["count"]
+            row.append(c)
+            total += c
+        row.append(total)
+        ws.append(row)
+
+    # いいねマトリクス
+    ws.append([])
+    ws.append(["【合計いいね】"])
+    ws.cell(ws.max_row, 1).font = Font(bold=True, size=12)
+    ws.append(headers)
+    style_header(ws, ws.max_row, len(headers))
+    for tp in topic_list:
+        row = [tp]
+        total = 0
+        for pt in type_list:
+            lk = cross[tp][pt]["likes"]
+            row.append(lk)
+            total += lk
+        row.append(total)
+        ws.append(row)
+        for cell in ws[ws.max_row][1:]:
+            cell.number_format = NUM_FMT
+
+    auto_width(ws)
+    ws.column_dimensions["A"].width = 20
+
+
 def generate_xlsx(xlsx_path, all_tweets, per_label):
     wb = Workbook()
     write_all_tweets_sheet(wb.active, all_tweets)
+    write_insights_sheet(wb, all_tweets, per_label)
     write_account_sheet(wb, all_tweets)
+    write_buzz_efficiency_sheet(wb, all_tweets)
+    write_cross_tab_sheet(wb, all_tweets)
     if len(per_label) > 1:
         write_label_sheet(wb, per_label)
     write_type_sheet(wb, all_tweets)
