@@ -9,8 +9,8 @@
 **Q1: 方向性・期間・品質**
 - 何を知りたいか（バズ分析 / 競合調査 / 世論調査 / トレンド把握）
 - 期間（直近24h / 7日 / それ以上）
-- 1クエリあたりの取得件数（デフォルト: 100件 / 少なめ: 50件 / 多め: 200件）
-- 最低いいね数（推奨: JP=10, EN=50。一律50や100も選択可）
+- 1クエリあたりの取得件数（デフォルト: 100件）
+- 最低いいね数（デフォルト: 100。50も選択可。10以下は絶対に設定しない）
 
 **Q2: 参考情報・言語**
 - 参考になるアカウントがあるか（`from:username` クエリに反映）
@@ -20,28 +20,72 @@
 **ヒアリング結果の反映:**
 - 期間 → `--since` パラメータ
 - 取得量 → `--limit` パラメータ（デフォルト100）
-- 最低いいね → `--min-likes` パラメータ
+- 最低いいね → `--min-likes` パラメータ（デフォルト100）
 - 参考アカウント → `from:` クエリ追加
-- 言語 → ノイズ除去設定、`-is:reply` 追加判断
+- 言語 → `lang:ja` / `lang:en` オペレータ、`-is:reply` 追加判断
 
 ## Phase 1: クエリ分解（Coordinator）
 
 リサーチ質問を **4〜6個の検索クエリ** に分解する。
 
-**クエリ設計の切り口:**
-- **Core** — テーマの直接キーワード（例: `"AIマーケ" OR "AI マーケティング"`）
-- **ツール/手法** — 具体ツール名（例: `"ChatGPT マーケ" OR "Claude マーケ" OR "AI広告"`）
-- **課題/ペインポイント** — `(broken OR bug OR issue)` `(失敗 OR 課題 OR 困)`
-- **成果/ポジティブ** — `(shipped OR love OR fast)` `(成功 OR 売上 OR 伸びた)`
-- **エキスパート** — `from:username` で特定の有識者
-- **関連領域** — テーマの周辺（例: AIマーケなら `AI SEO`, `AI SNS`, `AI LP/CVR`）
+### クエリ設計の鉄則
 
-**ノイズ対策:**
+**原則: 初手は狙って投げる。取れなかったら芸のある広げ方で対応。min-likes は絶対に下げない。**
+
+1. **初手は狙いを絞る**
+   - 感想語・文脈語を入れてピンポイントに狙うのはOK
+   - 例: `"Claude Code" 便利`, `Cursor 乗り換え`, `Antigravity すごい`
+   - これで100件取れれば最高。取れなければ Phase 2.5 で広げる
+
+2. **品質は `--min-likes` + `--sort likes` に任せる**
+   - `--min-likes 100` がデフォルト（ユーザー指定で変更可。ただし10以下は禁止）
+   - `--sort likes` で高エンゲージメント順
+   - `--pages 2` で200件取得（うち min-likes を通過したものが残る）
+
+3. **min-likes は絶対に下げない**
+   - 結果が少ない = テーマがニッチ（それ自体が有用な情報）
+   - 品質を落として量を増やすのは本末転倒
+
+### 広げ方の段階（Phase 2.5 で使う）
+
+件数が足りない時、以下の順に広げる:
+
+```
+Stage 1: 感想語・補足語を外す
+  "Claude Code" 便利 → "Claude Code"
+
+Stage 2: 固有名詞の組み合わせを変える
+  "Claude Code" MCP → "Claude Code" plugin
+  "Claude Code" lang:ja → "Claude Code"（全言語に）
+
+Stage 3: 制約を外す
+  -is:reply を外す / lang: を外す
+
+Stage 4: 取得量を増やす
+  --pages 2 → --pages 3 → --pages 5
+
+Stage 5: 期間を広げる
+  --since 7d → --since 14d
+
+⛔ 禁止: --min-likes を下げる
+```
+
+### クエリ分解の切り口
+
+- **ツール単体** — `"Claude Code"`, `Cursor AI`, `Antigravity` → 各ツールの話題
+- **ツール × ツール** — `"Claude Code" Cursor` → 比較・乗り換え文脈
+- **ツール × 機能** — `"Claude Code" MCP`, `Cursor Agent` → 特定機能の話題
+- **バズワード** — `"vibe coding"`, `"AI coding"` → 広域トレンド
+- **エキスパート** — `from:username` → 特定の有識者
+
+### ノイズ対策
+
 - `-is:retweet` は自動付加
 - 日本語テーマには `-is:reply` を追加推奨
 - 仮想通貨ノイズ: `-airdrop -giveaway -whitelist`
+- 言語フィルタ: `lang:ja` / `lang:en`
 
-各クエリにラベルを付ける（例: `"AIマーケ基本"`, `"AI×ツール"`, `"AI×SEO"`）。
+各クエリにラベルを付ける。
 
 ## Phase 2: 並列検索（Subagents）
 
@@ -66,30 +110,30 @@ Task (subagent_type: Bash, model: sonnet):
 
 **重要ルール:**
 - 全 Task を **1つのメッセージ** で発行（並列実行される）
-- Subagent は **`model: "sonnet"`** を指定（検索は Bash 実行のみなので Sonnet で十分）
+- Subagent は **`model: "sonnet"`** を指定
 - **`export PATH="$HOME/.bun/bin:$PATH"`** をコマンド先頭に必ず付ける
 - 出力先は `/tmp/{slug}-{label}.json` に統一
-- `--sort likes` で高エンゲージメントを優先取得
-- `--limit 100` が標準（ユーザー指定で変更可。深掘り時は `--pages 2` で200件/クエリ）
+- `--sort likes --min-likes 100 --pages 2` が標準（min-likes はユーザー指定値を使用）
+- `--limit 100` が標準
 
 ## Phase 2.5: リトライ（Coordinator）
 
-各クエリの取得件数を確認し、**目標の50%未満** のクエリは再検索する。
+各クエリの取得件数を確認。目標の50%未満のクエリは再検索する。
 
-**リトライ手順:**
-1. 取得件数を集計: `wc -l /tmp/{slug}-*.json` 等で確認
-2. 目標の50%未満のクエリを特定
-3. 同じラベル（方向性）を維持したまま、クエリを緩和:
-   - OR 条件を追加（類義語・関連語を拡張）
-   - `-is:reply` を外す
-   - `--min-likes` を下げるか外す
-   - `--since` を広げる（7d → 14d 等）
-4. 緩和したクエリで再度 Task(Bash, sonnet) を並列実行
-5. 再取得結果を同じ `/tmp/{slug}-{label}.json` に上書き
+**リトライは Phase 1 の「広げ方の段階」に従って実行する:**
+
+1. 感想語・補足語を外す
+2. 固有名詞の組み合わせを変える
+3. `-is:reply` を外す / `lang:` を外す
+4. `--pages` を増やす（2→3→5）
+5. `--since` を広げる（7d→14d）
+
+**⛔ 絶対に変えないもの:**
+- `--min-likes` は絶対に下げない（ゴミが混入する）
 
 **リトライ不要の判断:**
-- 全クエリが目標の50%以上 → Phase 3 へ進む
-- テーマがニッチで緩和しても件数が増えない場合 → その旨をユーザーに報告して Phase 3 へ
+- 全クエリが目標の50%以上 → Phase 3 へ
+- Stage 5 まで試しても件数が増えない → その旨をユーザーに報告して Phase 3 へ（件数が少ないこと自体が有用な情報）
 
 ## Phase 3: マージ & 品質確認（Coordinator）
 
@@ -230,38 +274,30 @@ python3 ~/.claude/skills/x-research/generate_summary_md.py \
 | Standard | 4-6 | 1 | ~400-600 | ~$2.00-3.00 |
 | Deep dive | 5-6 | 2 | ~1000-1200 | ~$5.00-6.00 |
 
-## 実例: AI×マーケティング リサーチ
+## 実例: Cursor vs Claude Code vs Antigravity
 
 ```
-User: "AIとマーケの掛け算でXリサーチして"
+User: "Cursor vs Claude Code vs Antigravityの論争をリサーチして"
 
-Coordinator Phase 0 — ヒアリング:
-  → 方向性: バズ分析、期間: 7日、取得量: 100件/クエリ、言語: 両方
+Phase 0 — ヒアリング:
+  → バズ分析+競合調査、7日、100件/クエリ、min-likes 100、日本語メイン
 
-Coordinator Phase 1 — クエリ分解:
-  1. "AIマーケ" OR "AI マーケティング"        → core
-  2. "ChatGPT マーケ" OR "Claude マーケ"      → tools
-  3. "AI SNS" OR "AI コンテンツ作成"           → sns
-  4. "AI活用 売上" OR "AI 自動化 マーケ"       → results
-  5. "AI×マーケ" OR "ChatGPT 売上"            → biz
-  6. (AI OR ChatGPT OR Claude) (LP OR CVR)    → pro
+Phase 1 — クエリ分解（シンプルな固有名詞のみ）:
+  1. "Claude Code" lang:ja          → cc-ja（JP での CC 話題）
+  2. Cursor lang:ja                 → cursor-ja（JP での Cursor 話題）
+  3. Antigravity lang:ja            → ag-ja（JP での AG 話題）
+  4. "Claude Code"                  → cc-all（全言語 CC）
+  5. "Claude Code" Cursor           → cc-cursor（CC×Cursor 比較文脈）
+  6. Antigravity agent              → ag-all（AG エージェント文脈）
 
-Phase 2 — 6件並列検索（Task Bash × 6）
-  → /tmp/ai-mkt-{core,tools,sns,results,biz,pro}.json
+  ※ 感想語ゼロ。方向性はキーワードの組み合わせで表現。
 
-Phase 3 — マージ: 90件 → 重複除去 → 88件（2件ノイズ除外）
+Phase 2 — 6件並列検索（--sort likes --min-likes 100 --pages 2）
+  → /tmp/ccvs-{cc-ja,cursor-ja,ag-ja,cc-all,cc-cursor,ag-all}.json
 
-Phase 5 — レポート生成:
-  python3 generate_summary_md.py \
-    --name "AI×マーケティング バズ分析" \
-    --files /tmp/ai-mkt-*.json \
-    --exclude {ポルトガル語ID} {韓国語ID}
+Phase 2.5 — リトライ判定:
+  cc-ja: 50件 ✅ / cursor-ja: 30件 → --pages 3 で再検索
+  ※ min-likes は絶対に下げない
 
-Phase 5.5 — 戦略分析追記
-
-Phase 6 — レビュー → 修正
-
-Phase 7 — 総括をユーザーに口頭提示:
-  「Claude Code がエコシステムで圧倒。プラグイン紹介リストが最もバズる型。
-   次のアクション: Claude Code プラグイン TOP5 の画像付き投稿を作成。」
+Phase 3 → Phase 5 → Phase 5.5 → Phase 6 → Phase 7
 ```

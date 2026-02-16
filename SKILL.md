@@ -35,14 +35,26 @@ Subagent 環境では `bun` にパスが通らないことがある。**全コ�
 **Phase 0 — ヒアリング（Coordinator）**
 検索開始前に **必ず** ユーザーに以下を確認する（AskUserQuestion を使用）:
 1. **方向性** — 何を知りたいか（バズ分析? 競合調査? 世論? トレンド?）
-2. **期間・取得量・品質フィルタ** — 期間（24h/7d）、1クエリ件数（デフォルト100）、最低いいね数（JP:10/EN:50 推奨）
+2. **期間・取得量・品質** — 期間（24h/7d）、1クエリ件数（デフォルト100）、最低いいね数（デフォルト100。絶対に10以下にしない）
 3. **参考情報** — 参考アカウントや参考ポストがあるか
 4. **言語** — 日本語メイン? 英語メイン? 両方?
 
-ヒアリング結果に応じて Phase 1 のクエリ設計と Phase 2 のパラメータを調整する。
-
 **Phase 1 — クエリ分解（Coordinator）**
-テーマを 4〜6 クエリに分解。切り口: Core / ツール / 課題 / 成果 / エキスパート / 関連領域。各クエリにラベルを付ける。
+テーマを 4〜6 クエリに分解。
+
+**⚠ クエリ設計の鉄則:**
+- **初手は狙いを絞って投げる**。感想語・文脈語を入れてピンポイントに狙うのはOK
+- **取れなかった時の広げ方に芸を出す**。段階的に広げる（下記参照）
+- **品質は `--sort likes` + `--min-likes` に任せる**
+- **min-likes は絶対に下げない**。量が足りなければ広げ方で対応する
+
+**広げ方の段階（Phase 2.5 リトライ順序）:**
+1. 感想語・補足語を外す（`"Claude Code" 便利` → `"Claude Code"`）
+2. 固有名詞の組み合わせを変える（`"Claude Code" MCP` → `"Claude Code" plugin`）
+3. `lang:` を外す / `-is:reply` を外す
+4. `--pages` を増やす（2→3→5）
+5. `--since` を広げる（7d→14d）
+⛔ min-likes を下げるのは禁止（ゴミが入る）
 
 **Phase 2 — 並列検索（Subagents）**
 全クエリを **1つのメッセージで同時に** Task(Bash, model:sonnet) として発行。
@@ -50,16 +62,26 @@ Subagent 環境では `bun` にパスが通らないことがある。**全コ�
 ```
 Task (subagent_type: Bash, model: sonnet):
   export PATH="$HOME/.bun/bin:$PATH" && \
-  cd ~/.claude/skills/x-research && source ~/.config/env/global.env && \
-  bun run x-search.ts search '"クエリ"' --sort likes --limit 100 --json > /tmp/{slug}-{label}.json
+  cd ~/0_AI/.claude/skills/x-research && source ~/.config/env/global.env && \
+  bun run x-search.ts search '"クエリ"' \
+    --sort likes --limit 100 --min-likes 100 --pages 2 \
+    --json > /tmp/{slug}-{label}.json
 ```
 
 **Phase 2.5 — リトライ（Coordinator）**
-各クエリの取得件数を確認。目標件数に大幅に足りないクエリ（目標の50%未満）は、同じ方向性のままクエリを緩和して再検索:
-- OR 条件を追加 / キーワードを広げる
+各クエリの取得件数を確認。目標の50%未満のクエリは再検索する。
+
+**リトライで変えていいもの:**
+- `--pages` を増やす（2→3→5）
+- OR で類義語・関連語を追加
 - `-is:reply` を外す
-- `--min-likes` を下げるか外す
-- `--since` を広げる
+- `--since` を広げる（7d→14d）
+
+**リトライで絶対に変えないもの:**
+- `--min-likes` は絶対に下げない（ゴミが入る）
+- 感想語・形容詞を追加しない（ヒット率が下がる）
+
+件数が少ないのはテーマがニッチという事実。品質を落として量を増やすのは本末転倒。
 
 **Phase 3 — マージ & ノイズ除去（Coordinator）**
 Top 10 を確認。`generate_summary_md.py` が重複除去・自動ノイズ除去（韓国語/ポルトガル語/スペイン語/アラビア語）を実行。
@@ -109,16 +131,18 @@ bun run x-search.ts search "クエリ" --quick
 
 ## Refinement Heuristics
 
-- **ノイズが多い** → `-is:reply` 追加、`--sort likes`、キーワード絞り込み
-- **結果が少ない** → `OR` で拡張、制約オペレータ除去
+- **ノイズが多い** → `-is:reply` 追加、`lang:ja`/`lang:en` で言語絞り
+- **結果が少ない** → `--pages` を増やす（min-likes は下げない）
 - **仮想通貨スパム** → `-$ -airdrop -giveaway -whitelist`
-- **専門家のみ** → `from:` または `--min-likes 50`
-- **中身のある投稿のみ** → `has:links`
+- **専門家のみ** → `from:username`
+- **同名の別物が混じる** → 最小限の文脈語を1つだけ追加（例: `Cursor AI`）
 
 ## Key Rules
 
 - Coordinator = **Opus**（クエリ設計・分析・レポート）、Subagent = **Sonnet**（検索・レビュー）
 - 並列 Task は**必ず1メッセージで全発行**
-- `--sort likes` + `--limit 100` が標準（ユーザー指定で変更可）
+- `--sort likes --min-likes 100 --limit 100 --pages 2` が標準
+- **クエリはシンプルに**（固有名詞のみ、感想語禁止）。品質は `--min-likes` に任せる
+- **min-likes は絶対に下げない**。量が欲しいなら `--pages` を増やす
 - JSON 出力先は `/tmp/{slug}-{label}.json`
 - X API コスト: $0.005/post read。Quick ~$0.50、Standard ~$2.00-3.00、Deep ~$5.00-6.00
