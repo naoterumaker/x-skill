@@ -1,211 +1,219 @@
-# x-research
+# x-skill — X/Twitter リサーチ & バズ分析ツールキット
 
-X/Twitter research agent for [Claude Code](https://code.claude.com) and [OpenClaw](https://openclaw.ai). Search, filter, monitor — all from the terminal.
+Claude Code のスキルとして動作する、X/Twitter のリアルタイムリサーチ & バズ分析ツールキット。
+Agent Team アーキテクチャにより、複数クエリの並列検索 → 自動ノイズ除去 → Markdown + xlsx レポート生成までを一気通貫で実行する。
 
-## What it does
+## 必要なもの
 
-Wraps the X API into a fast CLI so your AI agent (or you) can search tweets, pull threads, monitor accounts, and get sourced research without writing curl commands.
+| 項目 | 説明 |
+|------|------|
+| **X API Bearer Token** | [X Developer Portal](https://developer.x.com) で取得。pay-per-use（従量課金）方式 |
+| **Bun** | TypeScript ランタイム。[bun.sh](https://bun.sh) からインストール |
+| **Python 3.9+** | レポート生成スクリプト用。openpyxl は自動インストールされる |
+| **Claude Code** | [claude.ai/claude-code](https://claude.ai/claude-code) — スキルとして利用 |
 
-- **Search** with engagement sorting, time filtering, noise removal
-- **Quick mode** for cheap, targeted lookups
-- **Watchlists** for monitoring accounts
-- **Cache** to avoid repeat API charges
-- **Cost transparency** — every search shows what it cost
+> **API キーについて:** このリポジトリに API キーは含まれていません。
+> Bearer Token は環境変数 `X_BEARER_TOKEN` で設定してください（後述）。
+> `.env` ファイルや認証情報を **絶対にコミットしないでください**。
 
-## Install
+## セットアップ
 
-### Claude Code
+### 1. リポジトリのクローン
+
 ```bash
-# From your project
-mkdir -p .claude/skills
-cd .claude/skills
-git clone https://github.com/rohunvora/x-research-skill.git x-research
+# Claude Code のスキルディレクトリに配置
+mkdir -p ~/.claude/skills
+cd ~/.claude/skills
+git clone https://github.com/naoterumaker/x-skill.git x-research
 ```
 
-### OpenClaw
+### 2. Bun のインストール
+
 ```bash
-# From your workspace
-mkdir -p skills
-cd skills
-git clone https://github.com/rohunvora/x-research-skill.git x-research
+curl -fsSL https://bun.sh/install | bash
 ```
 
-## Setup
+### 3. X API Bearer Token の設定
 
-1. **X API Bearer Token** — Get one from the [X Developer Portal](https://developer.x.com)
-2. **Set the env var:**
-   ```bash
-   export X_BEARER_TOKEN="your-token-here"
-   ```
-   Or save it to `~/.config/env/global.env`:
-   ```
-   X_BEARER_TOKEN=your-token-here
-   ```
-3. **Install Bun** (for CLI tooling): https://bun.sh
+[X Developer Portal](https://developer.x.com) で Bearer Token を取得し、環境変数に設定:
 
-## Usage
-
-### Natural language (just talk to Claude)
-- "What are people saying about Opus 4.6?"
-- "Search X for OpenClaw skills"
-- "What's CT saying about BNKR today?"
-- "Check what @frankdegods posted recently"
-
-### CLI commands
 ```bash
-cd skills/x-research
+# 方法A: ~/.config/env/global.env に保存（推奨）
+mkdir -p ~/.config/env
+echo 'X_BEARER_TOKEN=ここにトークンを貼る' >> ~/.config/env/global.env
+```
 
-# Search (sorted by likes, auto-filters retweets)
-bun run x-search.ts search "your query" --sort likes --limit 10
+```bash
+# 方法B: シェルの環境変数に直接設定
+export X_BEARER_TOKEN="ここにトークンを貼る"
+```
 
-# Profile — recent tweets from a user
+## 使い方
+
+### 基本: CLI で直接検索
+
+```bash
+export PATH="$HOME/.bun/bin:$PATH"
+cd ~/.claude/skills/x-research
+source ~/.config/env/global.env
+
+# キーワード検索（いいね順）
+bun run x-search.ts search "AI マーケティング" --sort likes --limit 15
+
+# クイック検索（1ページ、ノイズフィルタ付き）
+bun run x-search.ts search "Claude Code" --quick
+
+# 特定ユーザーの投稿
 bun run x-search.ts profile username
 
-# Thread — full conversation
+# スレッド全文取得
 bun run x-search.ts thread TWEET_ID
 
-# Single tweet
-bun run x-search.ts tweet TWEET_ID
-
-# Watchlist
-bun run x-search.ts watchlist add username "optional note"
-bun run x-search.ts watchlist check
-
-# Save research to file
-bun run x-search.ts search "query" --save --markdown
+# JSON出力（レポート生成用）
+bun run x-search.ts search "query" --sort likes --limit 15 --json > /tmp/result.json
 ```
 
-### Search options
+### 検索オプション
+
 ```
---sort likes|impressions|retweets|recent   (default: likes)
---since 1h|3h|12h|1d|7d     Time filter (default: last 7 days)
---min-likes N              Filter minimum likes
---min-impressions N        Filter minimum impressions
---pages N                  Pages to fetch, 1-5 (default: 1, 100 tweets/page)
---limit N                  Results to display (default: 15)
---quick                    Quick mode (see below)
---from <username>          Shorthand for from:username in query
---quality                  Pre-filter low-engagement tweets (min_faves:10)
---no-replies               Exclude replies
---save                     Save to ~/clawd/drafts/
---json                     Raw JSON output
---markdown                 Markdown research doc
-```
-
-## Quick Mode
-
-`--quick` is designed for fast, cheap lookups when you just need a pulse check on a topic.
-
-**What it does:**
-- Forces single page (max 10 results) — reduces API reads
-- Auto-appends `-is:retweet -is:reply` noise filters (unless you explicitly used those operators)
-- Uses 1-hour cache TTL instead of the default 15 minutes
-- Shows cost summary after results
-
-**Examples:**
-```bash
-# Quick pulse check on a topic
-bun run x-search.ts search "BNKR" --quick
-
-# Quick check what someone is saying
-bun run x-search.ts search "BNKR" --from voidcider --quick
-
-# Quick quality-only results
-bun run x-search.ts search "AI agents" --quality --quick
+--sort likes|impressions|retweets|recent   ソート順（デフォルト: likes）
+--since 1h|3h|12h|1d|7d                    期間フィルタ（デフォルト: 7日）
+--min-likes N                              最低いいね数フィルタ
+--pages N                                  取得ページ数 1-5（100件/ページ）
+--limit N                                  表示件数（デフォルト: 15）
+--quick                                    クイックモード
+--from <username>                          from:username のショートハンド
+--quality                                  低エンゲージメント除去（いいね≥10）
+--no-replies                               リプライ除外
+--json                                     JSON出力
+--save                                     ファイル保存
+--markdown                                 Markdown形式で保存
 ```
 
-**Why it's cheaper:**
-- Prevents multi-page fetches (biggest cost saver)
-- 1hr cache means repeat searches are free
-- Noise filters mean fewer junk results in your 100-tweet page
-- You see cost after every search — no surprises
+### Agent Team リサーチ（メインワークフロー）
 
-## `--from` Shorthand
+Claude Code 上で自然言語で依頼すると、Agent Team が自動で動く:
 
-Adds `from:username` to your query without having to type the full operator syntax.
+```
+User: "AIとマーケの掛け算でXリサーチして"
+```
+
+**処理フロー:**
+
+1. **Phase 1** — Coordinator（Opus）がテーマを 4〜6 クエリに分解
+2. **Phase 2** — Subagent（Sonnet）が全クエリを並列検索 → JSON保存
+3. **Phase 3** — マージ & 自動ノイズ除去（韓国語/ポルトガル語/スペイン語/アラビア語を検出）
+4. **Phase 4** — X記事タイトル取得（必要時のみ、Chrome MCP経由）
+5. **Phase 5** — `generate_summary_md.py` で Markdown + xlsx レポート生成
+6. **Phase 6** — Review Agent（Sonnet）が MD の品質チェック
+
+### レポート生成スクリプト（generate_summary_md.py）
+
+検索結果の JSON から、バズ分析レポートを自動生成:
 
 ```bash
-# These are equivalent:
-bun run x-search.ts search "BNKR from:voidcider"
-bun run x-search.ts search "BNKR" --from voidcider
-
-# Works with --quick and other flags
-bun run x-search.ts search "AI" --from frankdegods --quick --quality
+python3 generate_summary_md.py \
+  --name "AI×マーケティング バズ分析" \
+  --files /tmp/ai-mkt-core.json /tmp/ai-mkt-tools.json /tmp/ai-mkt-sns.json \
+  --labels "AIマーケ基本" "AI×ツール" "AI×SNS" \
+  --queries '"AIマーケ" OR "AI マーケティング"' '"ChatGPT マーケ"' '"AI SNS"'
 ```
 
-If your query already contains `from:`, the flag won't double-add it.
+**オプション:**
 
-## `--quality` Flag
+| オプション | 説明 |
+|-----------|------|
+| `--name` | レポートタイトル（必須） |
+| `--files` | JSON ファイルパス（複数可、必須） |
+| `--labels` | 各ファイルのラベル名 |
+| `--queries` | 検索クエリ文字列（レポートに表示） |
+| `--exclude` | 除外するツイート ID（手動ノイズ除去） |
+| `--titles` | X記事タイトルの JSON マッピング |
+| `--topics` | カスタム TOPIC_RULES の JSON ファイル |
+| `--no-noise-filter` | 自動ノイズ除去を無効化 |
+| `--out-dir` | 出力先ディレクトリ |
+| `--no-xlsx` | xlsx 出力をスキップ |
 
-Filters out low-engagement tweets (≥10 likes required). Applied post-fetch since `min_faves` isn't available on X API Basic tier.
+**レポート出力内容:**
+
+1. **何が語られているか** — トピック別いいね合計 + 代表ツイート例
+2. **キーパーソン** — アカウント別プロファイル（話題・投稿タイプ・サンプル）
+3. **次にやるべきこと** — 5 項目のアクションプラン
+4. **バズ TOP10** — 全文・タグ・バズ効率・ポスト URL
+5. **数値サマリー** — クエリ一覧 + 全体指標テーブル
+6. **保存されるコンテンツ** — 保存率 TOP5（実用系）
+7. **外部リンク** — 共有された URL 集
+
+### 話題検出のカスタマイズ
+
+デフォルトの TOPIC_RULES（マーケ向け）:
+
+```
+LP/Web制作, SEO/検索流入, AI活用/テック, コンテンツ制作,
+AI副業/収益化, ビジネス/起業, 𝕏攻略/SNS, 広告/集客, 速報/ニュース
+```
+
+テーマに応じてカスタムルールを JSON で渡せる:
 
 ```bash
-bun run x-search.ts search "crypto AI" --quality
+# topics.json
+[
+  {"name": "LP/Web制作", "keywords": ["lp", "ランディング", "figma", "html"]},
+  {"name": "SEO", "keywords": ["seo", "検索", "google", "organic"]},
+  {"name": "AI活用", "keywords": ["claude", "chatgpt", "ai", "プロンプト"]}
+]
+
+python3 generate_summary_md.py --topics topics.json --name "..." --files ...
 ```
 
-## Cost
+## API コスト
 
-As of February 2026, the X API uses **pay-per-use pricing** with prepaid credits. No subscriptions, no monthly caps. You buy credits in the [Developer Console](https://console.x.com) and they're deducted per request.
+X API は従量課金（2026年2月時点）:
 
-**Per-resource costs:**
-| Resource | Cost |
-|----------|------|
+| リソース | コスト |
+|---------|-------|
 | Post read | $0.005 |
 | User lookup | $0.010 |
-| Post create | $0.010 |
 
-**Search cost:** Each search page returns up to 100 posts = ~$0.50/page.
+| 操作 | 推定コスト |
+|------|-----------|
+| Quick 検索（1ページ） | ~$0.50 |
+| 標準リサーチ（3-4クエリ） | ~$1.50-2.00 |
+| Deep dive（5-6クエリ） | ~$3.00-5.00 |
+| キャッシュ済みの再検索 | 無料 |
 
-| Operation | Est. cost |
-|-----------|-----------|
-| Quick search (1 page, ≤100 posts) | ~$0.50 |
-| Standard search (1 page) | ~$0.50 |
-| Deep research (3 pages) | ~$1.50 |
-| Profile check (user + posts) | ~$0.51 |
-| Watchlist check (5 accounts) | ~$2.55 |
-| Cached repeat (any) | free |
+キャッシュ（15分 TTL、Quick モードは 1時間）により重複リクエストを回避。
 
-**24-hour deduplication:** If you request the same post twice in a UTC day, you're only charged once. This means repeat searches on the same topic within a day cost less than the estimate above.
-
-**Spending controls:** Set auto-recharge thresholds and spending limits per billing cycle in the Developer Console. Failed requests are never billed.
-
-**xAI credit bonus:** Spend $200+/cycle on X API → earn 10-20% back as xAI/Grok API credits. See [pricing docs](https://docs.x.com/x-api/getting-started/pricing).
-
-**How x-search saves money:**
-- Cache (15min default, 1hr in quick mode) — repeat queries are free
-- 24-hour dedup means re-running the same search costs $0 at API level too
-- Quick mode prevents accidental multi-page fetches
-- Cost displayed after every search so you know what you're spending
-- `--from` targets specific users instead of broad searches
-- Monitor your usage programmatically: `GET /2/usage/tweets`
-
-## File structure
+## ファイル構成
 
 ```
-x-research/
-├── SKILL.md              # Agent instructions (Claude reads this)
-├── x-search.ts           # CLI entry point
+x-skill/
+├── SKILL.md                    # スキル定義（Claude が読む）
+├── x-search.ts                 # CLI エントリポイント（Bun で実行）
 ├── lib/
-│   ├── api.ts            # X API wrapper
-│   ├── cache.ts          # File-based cache
-│   └── format.ts         # Telegram + markdown formatters
-└── data/
-    ├── watchlist.json    # Accounts to monitor
-    └── cache/            # Auto-managed
+│   ├── api.ts                  # X API ラッパー
+│   ├── cache.ts                # ファイルキャッシュ（15分 TTL）
+│   ├── format.ts               # Markdown フォーマッタ
+│   ├── cost.ts                 # API コスト追跡
+│   ├── analyze.ts              # エンゲージメント分析
+│   └── xlsx.ts                 # xlsx エクスポート
+├── generate_summary_md.py      # MD + xlsx バズ分析（メイン）
+├── generate_full_report.py     # 総合分析 xlsx（8シート）
+├── generate_genz_report.py     # Z世代トレンド xlsx
+├── xlsx_export.py              # xlsx 生成ユーティリティ
+├── data/
+│   ├── watchlist.example.json  # ウォッチリスト例
+│   └── cache/                  # 検索キャッシュ（自動管理）
+├── references/
+│   └── x-api.md                # X API リファレンス
+└── reports/                    # レポート出力先（git 管理外）
+    └── YYYY-MM-DD/
 ```
 
-## Limitations
+## ベース
 
-- Search covers last 7 days only (recent search endpoint restriction)
-- Read-only — never posts or interacts
-- Requires X API access with prepaid credits ([sign up](https://console.x.com))
-- `min_likes` / `min_retweets` search operators unavailable (filtered post-hoc instead)
-- Full-archive search (beyond 7 days) requires enterprise access
+[rohunvora/x-research-skill](https://github.com/rohunvora/x-research-skill) をベースに、Agent Team アーキテクチャ・自動ノイズ検出・MD バズ分析レポート生成等を追加。
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=rohunvora/x-research-skill&type=Date)](https://star-history.com/#rohunvora/x-research-skill&Date)
-
-## License
+## ライセンス
 
 MIT
