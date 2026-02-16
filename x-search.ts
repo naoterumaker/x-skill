@@ -150,13 +150,24 @@ async function cmdSearch() {
     tweets = cached;
     console.error(`(cached — ${tweets.length} tweets)`);
   } else {
-    tweets = await api.search(query, {
-      pages,
-      // Always use recency for API pagination (relevancy doesn't paginate).
-      // Local sort by likes/impressions/retweets is applied after fetching.
-      sortOrder: "recency",
-      since: since || undefined,
-    });
+    // Hybrid fetch: relevancy (quality) + recency (volume), then merge.
+    // relevancy returns ~100 high-quality tweets (engagement-weighted, no pagination).
+    // recency returns pages*100 tweets with full pagination.
+    const [relevancyTweets, recencyTweets] = await Promise.all([
+      api.search(query, {
+        pages: 1,
+        sortOrder: "relevancy",
+        since: since || undefined,
+      }),
+      pages > 0
+        ? api.search(query, {
+            pages,
+            sortOrder: "recency",
+            since: since || undefined,
+          })
+        : Promise.resolve([] as api.Tweet[]),
+    ]);
+    tweets = api.dedupe([...relevancyTweets, ...recencyTweets]);
     cache.set(query, cacheParams, tweets);
   }
 
