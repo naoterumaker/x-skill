@@ -1,5 +1,27 @@
 # Agent Team ワークフロー詳細
 
+## Phase 0: ヒアリング（Coordinator）
+
+検索を開始する前に、**必ず** AskUserQuestion でユーザーに確認する。
+
+**確認項目（2問構成）:**
+
+**Q1: 方向性・期間・取得量**
+- 何を知りたいか（バズ分析 / 競合調査 / 世論調査 / トレンド把握）
+- 期間（直近24h / 7日 / それ以上）
+- 1クエリあたりの取得件数（デフォルト: 100件 / 少なめ: 50件 / 多め: 200件）
+
+**Q2: 参考情報・言語**
+- 参考になるアカウントがあるか（`from:username` クエリに反映）
+- 参考になるポストがあるか（クエリ設計のヒントに使う）
+- 言語（日本語メイン / 英語メイン / 両方）
+
+**ヒアリング結果の反映:**
+- 期間 → `--since` パラメータ
+- 取得量 → `--limit` パラメータ（デフォルト100）
+- 参考アカウント → `from:` クエリ追加
+- 言語 → ノイズ除去設定、`-is:reply` 追加判断
+
 ## Phase 1: クエリ分解（Coordinator）
 
 リサーチ質問を **4〜6個の検索クエリ** に分解する。
@@ -29,13 +51,13 @@ Task (subagent_type: Bash, model: sonnet):
   export PATH="$HOME/.bun/bin:$PATH" && \
   cd ~/.claude/skills/x-research && source ~/.config/env/global.env && \
   bun run x-search.ts search '"AIマーケ" OR "AI マーケティング"' \
-    --sort likes --limit 15 --json > /tmp/{slug}-core.json
+    --sort likes --limit 100 --json > /tmp/{slug}-core.json
 
 Task (subagent_type: Bash, model: sonnet):
   export PATH="$HOME/.bun/bin:$PATH" && \
   cd ~/.claude/skills/x-research && source ~/.config/env/global.env && \
   bun run x-search.ts search '"ChatGPT マーケ" OR "Claude マーケ"' \
-    --sort likes --limit 15 --json > /tmp/{slug}-tools.json
+    --sort likes --limit 100 --json > /tmp/{slug}-tools.json
 
 # ... 残りのクエリも同様に並列
 ```
@@ -46,7 +68,7 @@ Task (subagent_type: Bash, model: sonnet):
 - **`export PATH="$HOME/.bun/bin:$PATH"`** をコマンド先頭に必ず付ける
 - 出力先は `/tmp/{slug}-{label}.json` に統一
 - `--sort likes` で高エンゲージメントを優先取得
-- `--limit 15` が標準（深掘り時は `--pages 2`）
+- `--limit 100` が標準（ユーザー指定で変更可。深掘り時は `--pages 2` で200件/クエリ）
 
 ## Phase 3: マージ & 品質確認（Coordinator）
 
@@ -142,6 +164,34 @@ python3 ~/.claude/skills/x-research/generate_summary_md.py \
 - 数値の整合性（いいね合計、保存率等）
 - 戦略サマリーがデータと矛盾していないか
 
+## Phase 7: 総括（Coordinator / Opus）
+
+全 Phase 完了後、**ユーザーに口頭で総括を提示する**。MD ファイルへの追記ではなく、会話として伝える。
+
+**総括フォーマット:**
+
+```
+## 総括
+
+**分かったこと:**
+- [3行以内でリサーチの結論]
+
+**最も重要な発見:**
+- [意外だったこと、または最もインパクトのあるインサイト]
+
+**次のアクション:**
+- [ユーザーが今すぐやるべき具体的なこと1つ]
+
+**レポート:**
+- MD: [パス]
+- xlsx: [パス]
+```
+
+ポイント:
+- レポートの要約ではなく「so what（だから何？）」を伝える
+- ユーザーの文脈（何を作っている人か、何が目的か）に合わせて具体化
+- アクションは1つに絞る（多いと動けない）
+
 ## モデル使い分け
 
 | 役割 | モデル | 理由 |
@@ -156,13 +206,16 @@ python3 ~/.claude/skills/x-research/generate_summary_md.py \
 | スコープ | クエリ数 | ページ | 推定ツイート | 推定コスト |
 |---------|---------|-------|------------|-----------|
 | Quick scan | 1-2 | 1 | ~100-200 | ~$0.50-1.00 |
-| Standard | 3-4 | 1 | ~300-400 | ~$1.50-2.00 |
-| Deep dive | 5-6 | 1-2 | ~500-1000 | ~$3.00-5.00 |
+| Standard | 4-6 | 1 | ~400-600 | ~$2.00-3.00 |
+| Deep dive | 5-6 | 2 | ~1000-1200 | ~$5.00-6.00 |
 
 ## 実例: AI×マーケティング リサーチ
 
 ```
 User: "AIとマーケの掛け算でXリサーチして"
+
+Coordinator Phase 0 — ヒアリング:
+  → 方向性: バズ分析、期間: 7日、取得量: 100件/クエリ、言語: 両方
 
 Coordinator Phase 1 — クエリ分解:
   1. "AIマーケ" OR "AI マーケティング"        → core
@@ -185,5 +238,9 @@ Phase 5 — レポート生成:
 
 Phase 5.5 — 戦略分析追記
 
-Phase 6 — レビュー → 修正 → 完了
+Phase 6 — レビュー → 修正
+
+Phase 7 — 総括をユーザーに口頭提示:
+  「Claude Code がエコシステムで圧倒。プラグイン紹介リストが最もバズる型。
+   次のアクション: Claude Code プラグイン TOP5 の画像付き投稿を作成。」
 ```

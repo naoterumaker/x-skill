@@ -429,6 +429,7 @@ def generate_md(name, all_tweets, per_label, labels, queries=None):
         tag_str = " ".join(f"`{tag}`" for tag in tags)
         followers = t.get("author_followers", 1) or 1
         eff = m["likes"] / followers
+        eff_str = f"{eff:.2f}x" if eff < 1 else f"{eff:.1f}x"
         pt_label = POST_TYPE_LABELS.get(t.get("post_type", "text"), "?")
         display = get_display_text(t)
         # 改行を除去して読みやすく
@@ -436,7 +437,7 @@ def generate_md(name, all_tweets, per_label, labels, queries=None):
         if len(display_clean) > 200:
             display_clean = display_clean[:200] + "…"
 
-        lines.append(f"**{i}. @{t['username']}** — {compact(m['likes'])}いいね / {compact(m.get('bookmarks',0))}ブクマ（{pt_label} / 効率{eff:.1f}x）")
+        lines.append(f"**{i}. @{t['username']}** — {compact(m['likes'])}いいね / {compact(m.get('bookmarks',0))}ブクマ（{pt_label} / 効率{eff_str}）")
         lines.append(f"")
         lines.append(f"> {display_clean}")
         lines.append(f"")
