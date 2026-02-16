@@ -721,7 +721,7 @@ def main():
     parser.add_argument("--labels", nargs="+", help="各ファイルのラベル（省略時はファイル名）")
     parser.add_argument("--queries", nargs="+", help="各ファイルの検索クエリ文字列（省略可）")
     parser.add_argument("--titles", help="X記事タイトルのJSONマッピング（{tweet_id: title}）")
-    parser.add_argument("--out-dir", default="/Users/naoterumaker2/0_AI/x_skill/reports", help="出力ディレクトリ")
+    parser.add_argument("--out-dir", default=str(Path.home() / ".claude/skills/x-research/reports"), help="出力ディレクトリ")
     parser.add_argument("--no-xlsx", action="store_true", help="xlsx出力をスキップ")
     parser.add_argument("--exclude", nargs="+", help="除外するツイートID")
     parser.add_argument("--topics", help="TOPIC_RULESのJSONファイル（省略時はデフォルトルール）")

@@ -230,7 +230,7 @@ mcp__claude-in-chrome__navigate → mcp__claude-in-chrome__get_page_text
 ### Phase 5: レポート生成（Coordinator）
 
 ```bash
-python3 ~/0_AI/x_skill/generate_summary_md.py \
+python3 ~/.claude/skills/x-research/generate_summary_md.py \
   --name "テーマ名 バズ分析" \
   --files /tmp/{slug}-core.json /tmp/{slug}-tools.json ... \
   --labels "ラベルA" "ラベルB" ... \
@@ -238,6 +238,33 @@ python3 ~/0_AI/x_skill/generate_summary_md.py \
   --titles /tmp/{slug}-titles.json \
   --queries "クエリA" "クエリB" ...
 ```
+
+`generate_summary_md.py` はデータ層（トピック分類・キーパーソン・数値・TOP10）を出力する。
+**戦略的分析はスクリプトではなく Coordinator が担当する。**
+
+### Phase 5.5: 戦略分析の追記（Coordinator / Opus）
+
+生成された MD を読み、**Coordinator がテーマに合わせた戦略分析を追記**する。
+スクリプトの出力 = データ。Coordinator の追記 = インテリジェンス。
+
+**追記する内容：**
+
+1. **戦略的インサイト**（3〜5項目）
+   - このテーマで今どんな流れがあるか
+   - どのポジションが空いているか（競合が少ない切り口）
+   - ユーザーのビジネスに直結する示唆
+
+2. **バズパターン分析**
+   - TOP10に共通する「型」は何か（ハウツー、数字訴求、体験談、速報 等）
+   - 保存率が高い投稿の共通点
+   - エンゲージメントが低い投稿の共通点（避けるべきパターン）
+
+3. **具体的アクションプラン**
+   - 「次にやるべきこと」をスクリプト出力より具体化
+   - テーマ×ユーザーの文脈に合わせた提案（例: 「LP制作×AI活用の切り口でスレッド投稿」）
+   - 参考にすべきキーパーソンのスタイル
+
+**追記方法:** 生成された MD ファイルの先頭（「何が語られているか」の前）に `## 戦略サマリー` セクションとして挿入する。
 
 ### Phase 6: レビュー（Review Agent / Sonnet）
 
@@ -248,6 +275,7 @@ python3 ~/0_AI/x_skill/generate_summary_md.py \
 - Markdownの改行崩れがないか
 - ノイズツイートが混入していないか
 - 数値の整合性（いいね合計、保存率等）
+- 戦略サマリーがデータと矛盾していないか
 
 ### モデル使い分け
 
@@ -313,44 +341,13 @@ bun run x-search.ts search "<query>" --quick
 
 ## Python 分析スクリプト
 
-検索結果の JSON を受け取り、xlsx / md レポートを生成するスクリプト群。
-出力はすべて `x_skill/reports/YYYY-MM-DD/` に日付別で保存される。
-
-### generate_full_report.py — 総合分析 xlsx
-
-Claude Code / OpenClaw 等の複数クエリ結果を統合し、8シート構成の xlsx を出力。
-
-```bash
-# JSONデータを /tmp に保存済みの前提
-python3 ~/0_AI/x_skill/generate_full_report.py
-```
-
-**シート構成:**
-1. 戦略的インサイト — 自動生成された分析・提言（27項目）
-2. JA投稿 / EN投稿 / OpenClaw — クエリ別ツイート一覧（バズ効率・保存率付き）
-3. アカウントランキング — フォロワー数・平均いいね・主な投稿タイプ
-4. タイプ×言語クロス集計 — 投稿タイプ別・言語別エンゲージメント
-5. バズ公式テンプレート — バズパターン8種＋効率TOP15
-
-**主な列:** ユーザー名, アカウントURL, テキスト, ポストURL, いいね, RT, 引用, ブクマ, 投稿タイプ, バズ効率, 保存率
-
-### generate_genz_report.py — Z世代トレンド xlsx
-
-5カテゴリ（コスメ, 推し活, ガジェット, フード, ファッション）の横断分析。
-
-```bash
-python3 ~/0_AI/x_skill/generate_genz_report.py
-```
-
-**シート構成:** 戦略的インサイト, カテゴリ概要, バズ効率ランキング, + 5カテゴリ詳細
-
 ### generate_summary_md.py — Markdown + xlsx バズ分析
 
 任意のテーマ・複数JSONから「**何が語られているか**」を中心にmd + xlsxレポートを生成する汎用ツール。
 内容（話題）→ 人（キーパーソン）→ アクション → データの順で出力。
 
 ```bash
-python3 ~/0_AI/x_skill/generate_summary_md.py \
+python3 ~/.claude/skills/x-research/generate_summary_md.py \
   --name "テーマ名 バズ分析" \
   --files /tmp/a.json /tmp/b.json \
   --labels "ラベルA" "ラベルB" \
@@ -370,7 +367,7 @@ python3 ~/0_AI/x_skill/generate_summary_md.py \
 - `--titles` — X記事タイトルのJSONマッピング `{tweet_id: "タイトル"}`
 - `--topics` — カスタムTOPIC_RULESのJSONファイル（後述）
 - `--no-noise-filter` — 自動ノイズ除去を無効化
-- `--out-dir` — 出力先（デフォルト: `~/0_AI/x_skill/reports`）
+- `--out-dir` — 出力先（デフォルト: `~/.claude/skills/x-research/reports`）
 - `--no-xlsx` — xlsx出力をスキップ
 
 **自動ノイズ除去:**
@@ -420,32 +417,26 @@ python3 ~/0_AI/x_skill/generate_summary_md.py \
 ## フォルダ構成
 
 ```
-skills/x-research/              ← スキル定義（TS + API）
-├── SKILL.md                    （このファイル）
-├── x-search.ts                 （CLI エントリポイント）
-├── xlsx_export.py              （旧xlsx生成 — openpyxl）
-├── lib/
-│   ├── api.ts                  （X API wrapper: search, thread, profile, tweet, usage）
-│   ├── cache.ts                （ファイルキャッシュ, 15分TTL）
-│   ├── format.ts               （Telegram + markdown フォーマッタ）
-│   ├── cost.ts                 （APIコスト追跡: $0.005/post, $0.010/user）
-│   ├── analyze.ts              （エンゲージメント・インフルエンサー・キーワード分析）
-│   └── xlsx.ts                 （xlsx export TSラッパー）
-├── data/
-│   ├── watchlist.json           （監視アカウント）
-│   ├── cache/                   （自動管理）
-│   └── exports/                 （旧xlsx出力先）
-└── references/
-    └── x-api.md                 （X APIリファレンス）
-
-x_skill/                        ← 分析スクリプト + レポート出力
-├── generate_full_report.py      （総合分析 xlsx — 8シート）
-├── generate_genz_report.py      （Z世代トレンド xlsx — 8シート）
+~/.claude/skills/x-research/     ← すべて1ディレクトリに統合
+├── SKILL.md                     （このファイル）
+├── x-search.ts                  （CLI エントリポイント）
 ├── generate_summary_md.py       （md + xlsx バズ分析 — 汎用、TOPIC_RULES内蔵）
-└── reports/
-    └── YYYY-MM-DD/              （日付別）
-        └── テーマ名/            （検索ごとにサブフォルダ）
-            ├── テーマ名.md      （Markdownサマリー）
+├── lib/
+│   ├── api.ts                   （X API wrapper: search, thread, profile, tweet, usage）
+│   ├── cache.ts                 （ファイルキャッシュ, 15分TTL）
+│   ├── format.ts                （Markdown フォーマッタ）
+│   ├── cost.ts                  （APIコスト追跡: $0.005/post, $0.010/user）
+│   ├── analyze.ts               （エンゲージメント・インフルエンサー・キーワード分析）
+│   └── xlsx.ts                  （xlsx export TSラッパー）
+├── data/
+│   ├── watchlist.example.json   （ウォッチリスト例）
+│   └── cache/                   （自動管理）
+├── references/
+│   └── x-api.md                 （X APIリファレンス）
+└── reports/                     （レポート出力先、git管理外）
+    └── YYYY-MM-DD/
+        └── テーマ名/
+            ├── テーマ名.md      （Markdownサマリー + 戦略分析）
             └── テーマ名.xlsx    （スプレッドシート）
 ```
 
@@ -458,8 +449,9 @@ x_skill/                        ← 分析スクリプト + レポート出力
 │  1. クエリ分解（4-6クエリ）                    │
 │  2. Task Bash × N を並列発行                  │
 │  3. 結果マージ & ノイズ除去                    │
-│  4. generate_summary_md.py 実行               │
-│  5. Review Agent でMD品質チェック             │
+│  4. generate_summary_md.py 実行（データ層）    │
+│  5. Coordinator が戦略分析を追記               │
+│  6. Review Agent でMD品質チェック             │
 └────────┬──────┬──────┬──────┬────────────────┘
          │      │      │      │  Phase 2: 並列
     ┌────▼─┐┌───▼──┐┌──▼───┐┌─▼────┐
