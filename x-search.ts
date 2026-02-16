@@ -152,7 +152,9 @@ async function cmdSearch() {
   } else {
     tweets = await api.search(query, {
       pages,
-      sortOrder: sortOpt === "recent" ? "recency" : "relevancy",
+      // Always use recency for API pagination (relevancy doesn't paginate).
+      // Local sort by likes/impressions/retweets is applied after fetching.
+      sortOrder: "recency",
       since: since || undefined,
     });
     cache.set(query, cacheParams, tweets);
