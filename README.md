@@ -215,8 +215,6 @@ x-skill/
 │   ├── analyze.ts              # エンゲージメント分析
 │   └── xlsx.ts                 # xlsx エクスポート
 ├── generate_summary_md.py      # MD + xlsx バズ分析（メイン）
-├── generate_full_report.py     # 総合分析 xlsx（8シート）
-├── generate_genz_report.py     # Z世代トレンド xlsx
 ├── xlsx_export.py              # xlsx 生成ユーティリティ
 ├── data/
 │   ├── watchlist.example.json  # ウォッチリスト例
