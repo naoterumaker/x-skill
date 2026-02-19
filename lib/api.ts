@@ -314,11 +314,10 @@ export async function thread(
   try {
     const rootUrl = `${BASE}/tweets/${conversationId}?${FIELDS}`;
     const raw = await apiGet(rootUrl);
-    const rootTweets = parseTweets({ ...raw, data: raw.data ? [raw.data] : (raw as any).id ? [raw] : [] });
-    // Fix: single tweet lookup returns tweet at top level
-    if ((raw as any).id) {
-      // raw is the tweet itself — need to re-fetch with proper structure
-    }
+    trackPostReads(1);
+    // Single tweet endpoint returns { data: {...}, includes: {...} } — wrap data in array for parseTweets
+    const tweetData = raw.data && !Array.isArray(raw.data) ? [raw.data] : raw.data || [];
+    const rootTweets = parseTweets({ ...raw, data: tweetData });
     if (rootTweets.length > 0) {
       tweets.unshift(...rootTweets);
     }

@@ -11,11 +11,11 @@ bun run x-search.ts search "<query>" [options]
 - `--since 1h|3h|12h|1d|7d` — 期間フィルタ（default: 7日）。`30m` や ISO タイムスタンプも可
 - `--min-likes N` — 最低いいねフィルタ
 - `--min-impressions N` — 最低インプレッションフィルタ
-- `--pages N` — 取得ページ数 1-5（default: 1, 100件/ページ）
-- `--limit N` — 表示件数（default: 15）
+- `--pages N` — 取得ページ数 1-5（default: 2, 100件/ページ）。ハイブリッドモード: relevancy(1p) + recency(Np) を並列取得し重複除去
+- `--limit N` — 表示件数（default: 100）。`--json` 時は無視（全件出力）
 - `--quick` — 1ページ, max 10件, `-is:retweet -is:reply` 自動付加, 1時間キャッシュ
 - `--from <username>` — `from:username` のショートハンド
-- `--quality` — 低エンゲージメント除去（いいね ≥ 10）
+- `--quality` — 低エンゲージメント除去（いいね ≥ 50、post-hoc フィルタ）
 - `--no-replies` — リプライ除外
 - `--save` — `~/clawd/drafts/` に保存
 - `--json` — JSON 出力

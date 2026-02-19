@@ -19,13 +19,13 @@
  *   --sort likes|impressions|retweets|recent   Sort order (default: likes)
  *   --min-likes N              Filter by minimum likes
  *   --min-impressions N        Filter by minimum impressions
- *   --pages N                  Number of pages to fetch (default: 1, max 5)
+ *   --pages N                  Pages for recency fallback (default: 1, max 5). Relevancy always fetches 100.
  *   --no-replies               Exclude replies
  *   --no-retweets              Exclude retweets (added by default)
- *   --limit N                  Max results to display (default: 15)
+ *   --limit N                  Max results to display (default: 100)
  *   --quick                    Quick mode: 1 page, noise filter, 1hr cache
  *   --from <username>          Shorthand for from:username in query
- *   --quality                  Pre-filter low-engagement (min_faves:10)
+ *   --quality                  Post-filter low-engagement (min 50 likes)
  *   --save                     Save results to ~/clawd/drafts/
  *   --json                     Output raw JSON
  *   --markdown                 Output as markdown (for research docs)
@@ -100,7 +100,7 @@ async function cmdSearch() {
   const minLikes = parseInt(getOpt("min-likes") || "0");
   const minImpressions = parseInt(getOpt("min-impressions") || "0");
   let pages = Math.min(parseInt(getOpt("pages") || "1"), 5);
-  let limit = parseInt(getOpt("limit") || "15");
+  let limit = parseInt(getOpt("limit") || "100");
   const since = getOpt("since");
   const noReplies = getFlag("no-replies");
   const noRetweets = getFlag("no-retweets");
@@ -141,8 +141,8 @@ async function cmdSearch() {
   // Cache TTL: 1hr for quick mode, 15min default
   const cacheTtlMs = quick ? 3_600_000 : 900_000;
 
-  // Check cache (cache key does NOT include quick flag — shared between modes)
-  const cacheParams = `sort=${sortOpt}&pages=${pages}&since=${since || "7d"}`;
+  // Check cache (relevancy mode, max_results=100 fixed)
+  const cacheParams = `rel100&since=${since || "7d"}`;
   const cached = cache.get(query, cacheParams, cacheTtlMs);
   let tweets: api.Tweet[];
 
@@ -150,24 +150,15 @@ async function cmdSearch() {
     tweets = cached;
     console.error(`(cached — ${tweets.length} tweets)`);
   } else {
-    // Hybrid fetch: relevancy (quality) + recency (volume), then merge.
-    // relevancy returns ~100 high-quality tweets (engagement-weighted, no pagination).
-    // recency returns pages*100 tweets with full pagination.
-    const [relevancyTweets, recencyTweets] = await Promise.all([
-      api.search(query, {
-        pages: 1,
-        sortOrder: "relevancy",
-        since: since || undefined,
-      }),
-      pages > 0
-        ? api.search(query, {
-            pages,
-            sortOrder: "recency",
-            since: since || undefined,
-          })
-        : Promise.resolve([] as api.Tweet[]),
-    ]);
-    tweets = api.dedupe([...relevancyTweets, ...recencyTweets]);
+    // Relevancy fetch: max_results=100 fixed.
+    // X API relevancy surfaces hot posts only at 100 results (50以下だとバズが漏れる).
+    // Pagination not available with relevancy (no next_token returned).
+    tweets = await api.search(query, {
+      maxResults: 100,
+      pages: 1,
+      sortOrder: "relevancy",
+      since: since || undefined,
+    });
     cache.set(query, cacheParams, tweets);
   }
 
@@ -182,9 +173,9 @@ async function cmdSearch() {
     });
   }
 
-  // --quality: post-hoc filter for min 10 likes (min_faves operator unavailable on Basic tier)
+  // --quality: post-hoc filter for min 50 likes (min_faves operator unavailable on Basic tier)
   if (quality) {
-    tweets = api.filterEngagement(tweets, { minLikes: 10 });
+    tweets = api.filterEngagement(tweets, { minLikes: 50 });
   }
 
   // Sort
@@ -195,9 +186,9 @@ async function cmdSearch() {
 
   tweets = api.dedupe(tweets);
 
-  // Output
+  // Output (--json outputs ALL filtered results; --limit only caps display/markdown output)
   if (asJson) {
-    console.log(JSON.stringify(tweets.slice(0, limit), null, 2));
+    console.log(JSON.stringify(tweets, null, 2));
   } else if (asMarkdown) {
     const md = fmt.formatResearchMarkdown(query, tweets, {
       queries: [query],
@@ -251,7 +242,7 @@ async function cmdSearch() {
   const filtered = rawTweetCount !== tweets.length ? ` → ${tweets.length} after filters` : "";
   const sinceLabel = since ? ` | since ${since}` : "";
   console.error(
-    `${rawTweetCount} tweets${filtered} | sorted by ${sortOpt} | ${pages} page(s)${sinceLabel}`
+    `${rawTweetCount} tweets${filtered} | relevancy 100 | sorted by ${sortOpt}${sinceLabel}`
   );
 }
 
@@ -270,11 +261,14 @@ async function cmdAnalyze() {
 
   // Try to find cached results — check multiple common cache param patterns
   const paramPatterns = [
+    "rel100&since=7d",
+    "rel100&since=3d",
+    "rel100&since=1d",
+    // Legacy cache key patterns
+    "hybrid&pages=2&since=7d",
+    "hybrid&pages=1&since=7d",
     "sort=likes&pages=1&since=7d",
     "sort=likes&pages=2&since=7d",
-    "sort=likes&pages=3&since=7d",
-    "sort=recent&pages=1&since=7d",
-    "sort=impressions&pages=1&since=7d",
   ];
 
   let tweets: api.Tweet[] | null = null;
@@ -531,12 +525,12 @@ Search options:
   --since 1h|3h|12h|1d|7d   Time filter (default: last 7 days)
   --min-likes N              Filter minimum likes
   --min-impressions N        Filter minimum impressions
-  --pages N                  Pages to fetch, 1-5 (default: 1)
-  --limit N                  Results to display (default: 15)
+  --pages N                  Pages for recency fallback (default: 1)
+  --limit N                  Results to display (default: 100)
   --quick                    Quick mode: 1 page, max 10 results, auto noise
                              filter, 1hr cache TTL, cost summary
   --from <username>          Shorthand for from:username in query
-  --quality                  Pre-filter low-engagement tweets (min_faves:10)
+  --quality                  Post-filter low-engagement tweets (min 50 likes)
   --no-replies               Exclude replies
   --save                     Save to ~/clawd/drafts/
   --json                     Raw JSON output

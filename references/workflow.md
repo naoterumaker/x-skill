@@ -1,16 +1,16 @@
 # Agent Team ワークフロー詳細
 
-## Phase 0: ヒアリング（Coordinator）
+**原則: Opus はクエリ設計・フォールバック判断・分析執筆の3箇所のみ。それ以外は Sonnet or 直接実行。**
+
+## Phase 1: ヒアリング
 
 検索を開始する前に、**必ず** AskUserQuestion でユーザーに確認する。
 
 **確認項目（2問構成）:**
 
-**Q1: 方向性・期間・品質**
+**Q1: 方向性・期間**
 - 何を知りたいか（バズ分析 / 競合調査 / 世論調査 / トレンド把握）
-- 期間（直近24h / 7日 / それ以上）
-- 1クエリあたりの取得件数（デフォルト: 100件）
-- 最低いいね数（デフォルト: 100。50も選択可。10以下は絶対に設定しない）
+- 期間（直近24h / 3d / 7d）
 
 **Q2: 参考情報・言語**
 - 参考になるアカウントがあるか（`from:username` クエリに反映）
@@ -18,63 +18,47 @@
 - 言語（日本語メイン / 英語メイン / 両方）
 
 **ヒアリング結果の反映:**
-- 期間 → `--since` パラメータ
-- 取得量 → `--limit` パラメータ（デフォルト100）
-- 最低いいね → `--min-likes` パラメータ（デフォルト100）
+- 期間 → `--since` パラメータ（デフォルト 7d、フォールバックで 3d も試す）
 - 参考アカウント → `from:` クエリ追加
-- 言語 → `lang:ja` / `lang:en` オペレータ、`-is:reply` 追加判断
+- 言語 → `lang:ja` / `lang:en` オペレータ
 
-## Phase 1: クエリ分解（Coordinator）
+## Phase 2: クエリ分解 ⚡Opus
 
-リサーチ質問を **4〜6個の検索クエリ** に分解する。
+リサーチ質問を **1〜3個の検索クエリ** に分解する。少数精鋭で狙い撃ち。
+
+### X API の現実（クエリ設計の前提知識）
+
+- **`max_results=100` 固定**。relevancy は 50 以下だとバズ投稿が完全に漏れる（検証済み）
+- **ページネーション不可**（relevancy は `next_token` を返さない）
+- **`min_faves` / `min_likes` は API v2 で使えない**。post-hoc フィルタのみ
+- **表記ゆれが致命的**。`"Claude Code"` と `ClaudeCode` で全く異なる結果（検証済み: ClaudeCode で 778L、"Claude Code" で最大 6L）
+- **relevancy ≠ いいね順**。X 独自アルゴリズムで、結果は毎回変わる
+- **期間で精度が変わる**: 7d でまず投げ、バズが取れなければ 3d にフォールバック（3d の方が中間層 100-200L を拾いやすい）
 
 ### クエリ設計の鉄則
 
-**原則: 初手は狙って投げる。取れなかったら芸のある広げ方で対応。min-likes は絶対に下げない。**
+**原則: 表記ゆれを OR で網羅。結果から次のクエリを類推。**
 
-1. **初手は狙いを絞る**
+1. **表記ゆれの OR が最重要**
+   - `("Claude Code" OR ClaudeCode)` — スペースあり/なし
+   - `(Antigravity OR "anti gravity" OR "Google Antigravity")` — 綴りの揺れ
+   - `(AI OR 人工知能)` — 日英混在
+   - これを怠ると取れるはずのバズ投稿が全滅する
+
+2. **初手は狙いを絞る**
    - 感想語・文脈語を入れてピンポイントに狙うのはOK
-   - 例: `"Claude Code" 便利`, `Cursor 乗り換え`, `Antigravity すごい`
-   - これで100件取れれば最高。取れなければ Phase 2.5 で広げる
+   - 例: `("Claude Code" OR ClaudeCode) 便利 lang:ja`
+   - これで良い結果が取れれば最高。取れなければ Phase 4 で広げる
 
-2. **品質は `--min-likes` + `--sort likes` に任せる**
-   - `--min-likes 100` がデフォルト（ユーザー指定で変更可。ただし10以下は禁止）
-   - `--sort likes` で高エンゲージメント順
-   - `--pages 2` で200件取得（うち min-likes を通過したものが残る）
-
-3. **min-likes は絶対に下げない**
-   - 結果が少ない = テーマがニッチ（それ自体が有用な情報）
-   - 品質を落として量を増やすのは本末転倒
-
-### 広げ方の段階（Phase 2.5 で使う）
-
-件数が足りない時、以下の順に広げる:
-
-```
-Stage 1: 感想語・補足語を外す
-  "Claude Code" 便利 → "Claude Code"
-
-Stage 2: 固有名詞の組み合わせを変える
-  "Claude Code" MCP → "Claude Code" plugin
-  "Claude Code" lang:ja → "Claude Code"（全言語に）
-
-Stage 3: 制約を外す
-  -is:reply を外す / lang: を外す
-
-Stage 4: 取得量を増やす
-  --pages 2 → --pages 3 → --pages 5
-
-Stage 5: 期間を広げる
-  --since 7d → --since 14d
-
-⛔ 禁止: --min-likes を下げる
-```
+3. **品質はクエリの質で決まる**
+   - `--sort likes` でソートし、上位を使う
+   - post-hoc の `--min-likes` は補助。APIレベルでは効かない
 
 ### クエリ分解の切り口
 
-- **ツール単体** — `"Claude Code"`, `Cursor AI`, `Antigravity` → 各ツールの話題
-- **ツール × ツール** — `"Claude Code" Cursor` → 比較・乗り換え文脈
-- **ツール × 機能** — `"Claude Code" MCP`, `Cursor Agent` → 特定機能の話題
+- **ツール単体** — `("Claude Code" OR ClaudeCode)`, `Cursor AI`, `Antigravity` → 各ツールの話題
+- **ツール × ツール** — `("Claude Code" OR ClaudeCode) Cursor` → 比較・乗り換え文脈
+- **ツール × 機能** — `("Claude Code" OR ClaudeCode) MCP`, `Cursor Agent` → 特定機能
 - **バズワード** — `"vibe coding"`, `"AI coding"` → 広域トレンド
 - **エキスパート** — `from:username` → 特定の有識者
 
@@ -87,7 +71,7 @@ Stage 5: 期間を広げる
 
 各クエリにラベルを付ける。
 
-## Phase 2: 並列検索（Subagents）
+## Phase 3: 並列検索（Sonnet）
 
 全クエリを同時に Task subagent（Bash型）で並列実行する。
 
@@ -95,15 +79,17 @@ Stage 5: 期間を広げる
 # 1つのメッセージで複数の Task tool を同時に呼ぶ
 Task (subagent_type: Bash, model: sonnet):
   export PATH="$HOME/.bun/bin:$PATH" && \
-  cd ~/.claude/skills/x-research && source ~/.config/env/global.env && \
-  bun run x-search.ts search '"AIマーケ" OR "AI マーケティング"' \
-    --sort likes --limit 100 --json > /tmp/{slug}-core.json
+  cd ~/0_AI/.claude/skills/x-research && source ~/.config/env/global.env && \
+  bun run x-search.ts search '("Claude Code" OR ClaudeCode) lang:ja' \
+    --sort likes --since 7d \
+    --json > /tmp/{slug}-core.json
 
 Task (subagent_type: Bash, model: sonnet):
   export PATH="$HOME/.bun/bin:$PATH" && \
-  cd ~/.claude/skills/x-research && source ~/.config/env/global.env && \
-  bun run x-search.ts search '"ChatGPT マーケ" OR "Claude マーケ"' \
-    --sort likes --limit 100 --json > /tmp/{slug}-tools.json
+  cd ~/0_AI/.claude/skills/x-research && source ~/.config/env/global.env && \
+  bun run x-search.ts search 'Cursor (AI OR エディタ) lang:ja' \
+    --sort likes --since 7d \
+    --json > /tmp/{slug}-cursor.json
 
 # ... 残りのクエリも同様に並列
 ```
@@ -113,191 +99,225 @@ Task (subagent_type: Bash, model: sonnet):
 - Subagent は **`model: "sonnet"`** を指定
 - **`export PATH="$HOME/.bun/bin:$PATH"`** をコマンド先頭に必ず付ける
 - 出力先は `/tmp/{slug}-{label}.json` に統一
-- `--sort likes --min-likes 100 --pages 2` が標準（min-likes はユーザー指定値を使用）
-- `--limit 100` が標準
+- `--sort likes --since 7d` が標準（max_results=100 はコード内で固定）
 
-## Phase 2.5: リトライ（Coordinator）
+## Phase 4: フォールバック ⚡Opus
 
-各クエリの取得件数を確認。目標の50%未満のクエリは再検索する。
+各クエリの結果を確認。**良い結果から次のクエリを類推する。**
+十分な結果が取れていれば **スキップして Phase 5 へ直行**。
 
-**リトライは Phase 1 の「広げ方の段階」に従って実行する:**
+### 結果ベースのフォールバック（優先）
 
-1. 感想語・補足語を外す
-2. 固有名詞の組み合わせを変える
-3. `-is:reply` を外す / `lang:` を外す
-4. `--pages` を増やす（2→3→5）
-5. `--since` を広げる（7d→14d）
+```
+Step 1: TOP投稿を確認
+  → 778L @Beverly_15B: "claudecode × パワポ..." が見つかった
 
-**⛔ 絶対に変えないもの:**
-- `--min-likes` は絶対に下げない（ゴミが混入する）
+Step 2: 著者の深掘り
+  → from:Beverly_15B で追加検索 → 他のバズ投稿も取得
 
-**リトライ不要の判断:**
-- 全クエリが目標の50%以上 → Phase 3 へ
-- Stage 5 まで試しても件数が増えない → その旨をユーザーに報告して Phase 3 へ（件数が少ないこと自体が有用な情報）
+Step 3: キーワードで横展開
+  → 「パワポ」「エクセル」がバズキーワード → ClaudeCode (エクセル OR スプレッド) で追加
 
-## Phase 3: マージ & 品質確認（Coordinator）
+Step 4: 関連テーマへ展開
+  → 結果に Cursor 言及が多い → Cursor (移行 OR 比較 OR 乗り換え) で追加
 
-`generate_summary_md.py` が自動でやること:
-- **重複除去**: 同じツイートが複数クエリでヒットした場合は最初のラベルに帰属
-- **自動ノイズ除去**: 韓国語・ポルトガル語・スペイン語・アラビア語を自動検出 & 除外（日本語のひらがな/カタカナがあれば日本語として保持）
-- 除外された件数と内容は stderr に出力される
-
-Coordinator がやること:
-- Top 10 を確認して内容の妥当性チェック
-- X記事でテキストが URL-only のものがないか確認 → あれば Phase 4 へ
-- 必要なら `--exclude` で追加の手動除外
-
-```python
-# 結果の概要確認（Coordinator が実行）
-python3 -c "
-import json
-files = ['/tmp/{slug}-core.json', '/tmp/{slug}-tools.json', ...]
-all_tweets = []
-seen = set()
-for path in files:
-    with open(path) as f:
-        for t in json.load(f):
-            if t['id'] not in seen:
-                seen.add(t['id'])
-                all_tweets.append(t)
-print(f'Total unique: {len(all_tweets)}')
-all_tweets.sort(key=lambda x: x['metrics']['likes'], reverse=True)
-for t in all_tweets[:10]:
-    print(f'{t[\"metrics\"][\"likes\"]}L @{t[\"username\"]}: {t[\"text\"][:60]}')
-"
+Step 5: 表記ゆれの発見
+  → 結果内に「クロードコード」表記を発見 → 次のクエリに追加
 ```
 
-## Phase 4: X記事タイトル取得（必要な場合のみ）
+**フォールバックは最大 1〜2 クエリ。** 必要なものだけピンポイントで追加。
 
-X記事でテキストが t.co リンクのみの場合、Chrome 操作でタイトルを取得:
+### 従来の広げ方（補助）
+
+結果ベースで展開した後、それでも足りなければ:
+1. 感想語・補足語を外す
+2. `lang:` を外す / `-is:reply` を外す
+3. `--since` を短くする（7d → 3d: relevancy の精度が上がる）
+4. `--since` を広げる（7d → 指定なし: 7日フル）
+
+**⛔ やってはいけないこと:**
+- `max_results` を 100 未満にする（バズが漏れる）
+- 品質度外視で雑なクエリを大量に投げる
+- フォールバックを 3 クエリ以上追加する（コスト膨張）
+
+## Phase 5: X記事タイトル取得（必要時のみ）
+
+X記事でテキストが t.co リンクのみの場合、Chrome 操作でタイトルを取得。
+テキストが既にある場合は **スキップ**。
 
 ```bash
-# Chrome MCP でX記事ページに移動し、タイトルを取得
+# Chrome MCPでX記事ページに移動し、タイトルを取得
 mcp__claude-in-chrome__navigate → mcp__claude-in-chrome__get_page_text
 ```
 
-タイトルを `{tweet_id: "タイトル"}` の JSON に保存し、`--titles` で渡す。
-テキストが既にある場合はスキップ可。
+タイトルを `{tweet_id: "タイトル"}` のJSONに保存し、`--titles` で渡す。
 
-## Phase 5: レポート生成（Coordinator）
+## Phase 6: レポート生成（Sonnet + Coordinator 並列）
 
-```bash
-python3 ~/.claude/skills/x-research/generate_summary_md.py \
-  --name "テーマ名 バズ分析" \
-  --files /tmp/{slug}-core.json /tmp/{slug}-tools.json ... \
-  --labels "ラベルA" "ラベルB" ... \
-  --exclude {noise_id_1} {noise_id_2} \
-  --titles /tmp/{slug}-titles.json \
-  --queries "クエリA" "クエリB" ...
+**以下の A と B を同時に実行する。これが最大の高速化ポイント。**
+
+### A. Task(Sonnet): マージ確認 & スクリプト実行
+
+```
+Task (subagent_type: Bash, model: sonnet):
+  cd ~/0_AI/.claude/skills/x-research && \
+  python3 -c "
+  import json
+  files = ['/tmp/{slug}-core.json', '/tmp/{slug}-tools.json']
+  all_tweets = []; seen = set()
+  for path in files:
+      with open(path) as f:
+          for t in json.load(f):
+              if t['id'] not in seen:
+                  seen.add(t['id']); all_tweets.append(t)
+  print(f'Total unique: {len(all_tweets)}')
+  all_tweets.sort(key=lambda x: x['metrics']['likes'], reverse=True)
+  for t in all_tweets[:10]:
+      print(f'{t[\"metrics\"][\"likes\"]:>5}L @{t[\"username\"]}: {t[\"text\"][:70]}')
+  " && \
+  python3 generate_summary_md.py \
+    --name "テーマ名" \
+    --files /tmp/{slug}-core.json /tmp/{slug}-tools.json \
+    --labels "ラベルA" "ラベルB" \
+    --queries "クエリA" "クエリB" \
+    --out-dir ~/0_AI/x_skill/reports
 ```
 
-`generate_summary_md.py` はデータ層（トピック分類・キーパーソン・数値・TOP10）を出力する。
-戦略的分析はスクリプトではなく Coordinator が担当する。
+### B. Coordinator(Opus): 全体概要 & 戦略分析を執筆 ⚡Opus
 
-## Phase 5.5: 戦略分析の追記（Coordinator / Opus）
+Phase 3-4 で得た TOP 結果を基に、**A の完了を待たずに** 以下を執筆する。
 
-生成された MD を読み、**Coordinator がテーマに合わせた戦略分析を追記** する。
-スクリプトの出力 = データ。Coordinator の追記 = インテリジェンス。
+**① 全体概要（最重要・必須）**
 
-**追記する内容:**
+「今X上で何が起きているか」を **3〜5行の平文** で説明する。レポートを読む人が最初に目にするセクション。
 
-1. **戦略的インサイト**（3〜5項目）
-   - このテーマで今どんな流れがあるか
-   - どのポジションが空いているか（競合が少ない切り口）
-   - ユーザーのビジネスに直結する示唆
+**含めるべき内容:**
+- 議論の全体像（どんな構図か、何が争点か）
+- 主要な論点・立場（何派がいて、それぞれ何を言っているか）
+- 温度感（盛り上がってるのか、落ち着いてるのか、反動が来てるのか）
+- テーマ固有の文脈（業界動向、直近の出来事との関連）
 
-2. **バズパターン分析**
-   - TOP10 に共通する「型」は何か（ハウツー、数字訴求、体験談、速報 等）
-   - 保存率が高い投稿の共通点
-   - エンゲージメントが低い投稿の共通点（避けるべきパターン）
+**書き方のルール:**
+- バズ数値やメトリクスは書かない。「何が語られているか」だけを自然な文章で
+- 読んだ人が「なるほど、X上ではこういう状況なのか」と全体像を掴める内容にする
+- 具体的な投稿や人名を引用してもOK（裏付けとして）
 
-3. **具体的アクションプラン**
-   - 「次にやるべきこと」をスクリプト出力より具体化
-   - テーマ × ユーザーの文脈に合わせた提案
-   - 参考にすべきキーパーソンのスタイル
+**例（Manus vs Claude Code）:**
+```
+## 全体概要
 
-**追記方法:** 生成された MD ファイルの先頭（「何が語られているか」の前）に `## 戦略サマリー` セクションとして挿入する。
+X上での「Manus vs Claude Code」の議論は、対立構図ではなく
+「併用」の文脈が主流になっている。Claude Code でコード管理・
+情報整理を行い、Manus にブラウザ操作を任せるという棲み分けが
+定着しつつある。一方、日本語圏では Manus を使った収益化事例
+（LP構築、X自動返信、Stripe連携）が目立ち、非エンジニア層に
+とっては Manus の方が「すぐ稼げるツール」として認識されている。
+英語圏では Meta による Manus 買収を軸に、AIエージェント領域の
+大企業買収戦争という文脈で語られることが多い。
+```
 
-## Phase 6: レビュー（Review Agent / Sonnet）
+**② 戦略サマリー**
 
-レポート生成後、`pr-review-toolkit:code-reviewer`（`model: "sonnet"`）で MD の品質チェックを行う。
+全体概要の後に、ビジネス寄りの分析を追記する:
+- 戦略的インサイト（3〜5項目: 流れ、空きポジション、ビジネス示唆）
+- バズパターン分析（TOP10の共通型、保存率の高い/低い投稿の特徴）
+- 具体的アクションプラン（テーマ × ユーザー文脈に合わせた提案）
+
+## Phase 7: MD統合 & 総括
+
+A の MD 生成が完了したら、B で書いた全体概要 & 戦略サマリーを MD 先頭に挿入。
+
+その後、ユーザーに **口頭で総括を提示**（MDには書かない）:
+- このリサーチで分かったこと（3行以内）
+- 最も重要な発見・意外だったこと
+- ユーザーが次にやるべき具体的アクション1つ
+- レポートファイルのパス（MD + xlsx）
+
+## Phase 8: レビュー（Deep dive のみ・バックグラウンド）
+
+通常リサーチでは **スキップ**。Deep dive の場合のみ:
+`pr-review-toolkit:code-reviewer`（model:sonnet, run_in_background）で MD 品質チェック。
 
 チェック観点:
 - トピック例の重複がないか
-- Markdown の改行崩れがないか
+- Markdownの改行崩れがないか
 - ノイズツイートが混入していないか
 - 数値の整合性（いいね合計、保存率等）
-- 戦略サマリーがデータと矛盾していないか
-
-## Phase 7: 総括（Coordinator / Opus）
-
-全 Phase 完了後、**ユーザーに口頭で総括を提示する**。MD ファイルへの追記ではなく、会話として伝える。
-
-**総括フォーマット:**
-
-```
-## 総括
-
-**分かったこと:**
-- [3行以内でリサーチの結論]
-
-**最も重要な発見:**
-- [意外だったこと、または最もインパクトのあるインサイト]
-
-**次のアクション:**
-- [ユーザーが今すぐやるべき具体的なこと1つ]
-
-**レポート:**
-- MD: [パス]
-- xlsx: [パス]
-```
-
-ポイント:
-- レポートの要約ではなく「so what（だから何？）」を伝える
-- ユーザーの文脈（何を作っている人か、何が目的か）に合わせて具体化
-- アクションは1つに絞る（多いと動けない）
 
 ## モデル使い分け
 
-| 役割 | モデル | 理由 |
-|------|--------|------|
-| Coordinator（クエリ設計・結果解釈・最終出力） | **Opus** | テーマ理解、クエリの質、ユーザーへの報告 |
-| 検索実行 Subagent | **Sonnet** or Bash 直接 | 単純なコマンド実行のみ |
-| レビュー Agent | **Sonnet** | MD チェックは Sonnet で十分 |
-| X記事タイトル取得（Chrome） | **Sonnet** | ページ遷移 & テキスト抽出のみ |
+| Phase | 役割 | モデル | 理由 |
+|-------|------|--------|------|
+| 1 | ヒアリング | Coordinator（どのモデルでもOK） | AskUserQuestion を投げるだけ |
+| 2 | クエリ分解 | **⚡Opus** | テーマ理解、クエリの質が全てを決める |
+| 3 | 並列検索 | **Sonnet** Task(Bash) | コマンド実行のみ |
+| 4 | フォールバック | **⚡Opus** | 結果を読んで次を類推する判断力 |
+| 5 | X記事タイトル取得 | Chrome MCP | 必要時のみ。大半スキップ |
+| 6A | スクリプト実行 | **Sonnet** Task(Bash) | python 実行するだけ |
+| 6B | 全体概要 & 戦略 | **⚡Opus** | **本丸。** 分析・執筆の質が最終アウトプットを決める |
+| 7 | MD統合 & 総括 | Coordinator | Edit で挿入 + ユーザーに報告 |
+| 8 | レビュー | **Sonnet**（BG） | MD チェックは Sonnet で十分。Deep dive のみ |
+
+**Opus の実質稼働: Phase 2, 4, 6B の3回のみ。**
 
 ## コスト見積もり
 
-| スコープ | クエリ数 | ページ | 推定ツイート | 推定コスト |
-|---------|---------|-------|------------|-----------|
-| Quick scan | 1-2 | 1 | ~100-200 | ~$0.50-1.00 |
-| Standard | 4-6 | 1 | ~400-600 | ~$2.00-3.00 |
-| Deep dive | 5-6 | 2 | ~1000-1200 | ~$5.00-6.00 |
+| スコープ | クエリ数 | 推定ツイート | 推定コスト |
+|---------|---------|------------|-----------|
+| Quick scan | 1 | ~100 | ~$0.50 |
+| Standard | 1-3 | ~100-300 | ~$0.50-1.50 |
+| Deep dive（フォールバック含む） | 3-5 | ~300-500 | ~$1.50-2.50 |
+
+## 処理フロー図
+
+```
+Phase 1: ヒアリング
+  │
+Phase 2: クエリ分解 ⚡Opus
+  │
+Phase 3: ┌─ Task(Sonnet): 検索A ─┐
+          ├─ Task(Sonnet): 検索B ─┤ 並列
+          └─ Task(Sonnet): 検索C ─┘
+  │
+Phase 4: フォールバック判断 ⚡Opus（スキップ可）
+  │        └─ Task(Sonnet): 追加検索 ×1-2
+  │
+Phase 5: X記事タイトル取得（必要時のみ・大半スキップ）
+  │
+Phase 6: ┌─ A: Task(Sonnet): スクリプト実行 ─┐ 並列
+          └─ B: Opus: 全体概要 & 戦略執筆 ──┘
+  │
+Phase 7: MD統合 & 総括
+  │
+Phase 8: レビュー（Deep dive のみ, BG）
+```
 
 ## 実例: Cursor vs Claude Code vs Antigravity
 
 ```
 User: "Cursor vs Claude Code vs Antigravityの論争をリサーチして"
 
-Phase 0 — ヒアリング:
-  → バズ分析+競合調査、7日、100件/クエリ、min-likes 100、日本語メイン
+Phase 1 — ヒアリング:
+  → バズ分析+競合調査、7d、日本語メイン
 
-Phase 1 — クエリ分解（シンプルな固有名詞のみ）:
-  1. "Claude Code" lang:ja          → cc-ja（JP での CC 話題）
-  2. Cursor lang:ja                 → cursor-ja（JP での Cursor 話題）
-  3. Antigravity lang:ja            → ag-ja（JP での AG 話題）
-  4. "Claude Code"                  → cc-all（全言語 CC）
-  5. "Claude Code" Cursor           → cc-cursor（CC×Cursor 比較文脈）
-  6. Antigravity agent              → ag-all（AG エージェント文脈）
+Phase 2 — クエリ分解 ⚡Opus（1〜3クエリ、表記ゆれを OR で網羅）:
+  1. ("Claude Code" OR ClaudeCode) lang:ja       → cc-ja
+  2. (Cursor AI OR CursorAI) lang:ja              → cursor-ja
+  3. (Antigravity OR "Google Antigravity") lang:ja → ag-ja
 
-  ※ 感想語ゼロ。方向性はキーワードの組み合わせで表現。
+Phase 3 — 3件並列検索（Sonnet, --sort likes --since 7d）
+  → /tmp/ccvs-{cc-ja,cursor-ja,ag-ja}.json
 
-Phase 2 — 6件並列検索（--sort likes --min-likes 100 --pages 2）
-  → /tmp/ccvs-{cc-ja,cursor-ja,ag-ja,cc-all,cc-cursor,ag-all}.json
+Phase 4 — フォールバック ⚡Opus（1〜2クエリ追加）:
+  cc-ja TOP: 778L @Beverly_15B ("claudecode × パワポ")
+  → from:Beverly_15B で追加検索（フォールバック1）
+  → ("Claude Code" OR ClaudeCode) Cursor で比較文脈を取得（フォールバック2）
 
-Phase 2.5 — リトライ判定:
-  cc-ja: 50件 ✅ / cursor-ja: 30件 → --pages 3 で再検索
-  ※ min-likes は絶対に下げない
+Phase 5 — X記事タイトル取得（スキップ）
 
-Phase 3 → Phase 5 → Phase 5.5 → Phase 6 → Phase 7
+Phase 6 — 並列実行:
+  A: Task(Sonnet) → generate_summary_md.py 実行
+  B: Opus → 全体概要 & 戦略サマリー執筆
+
+Phase 7 — MD統合 & 総括
 ```
