@@ -1,234 +1,144 @@
-# x-skill — X/Twitter リサーチ & バズ分析ツールキット
+# x-research — X/Twitter リサーチ & バズ分析
 
-「テーマを投げたらレポートが出てくる」X/Twitter リサーチ自動化システム。
+テーマを投げると、並列検索 → ノイズ除去 → 構造化レポート（MD + xlsx）を自動生成する Claude Code スキル。
 
-[rohunvora/x-research-skill](https://github.com/rohunvora/x-research-skill)（X API 検索 CLI）を**魔改造**し、Agent Team アーキテクチャによる並列検索 → 自動ノイズ除去 → Markdown + xlsx バズ分析レポート生成までを一気通貫で実行するリサーチシステムに進化させた。
+## 何ができるか
 
-## 原作との違い
+- テーマに対するX上の **世論・バズ・トレンド** を網羅的に収集・分析
+- **全体概要**（X上で今何が起きているか）を自然な文章で記述
+- **戦略サマリー**（インサイト・バズパターン・アクションプラン）を自動生成
+- バズTOP10・キーパーソン・保存率分析を含む **MD + xlsx** レポート出力
 
-原作は**検索ツール**（クエリを叩いてツイートの JSON を返す道具）。
-本リポジトリは**リサーチチームの自動化**（道具 + 設計図 + 作業チーム + 品質検査員をパッケージしたもの）。
+## 出力例
 
-| | 原作 | 本リポジトリ |
-|---|---|---|
-| **やること** | X API を叩いて結果を返す | テーマを受け取り、分析レポートを出力する |
-| **ユーザーの作業** | クエリを考える → 結果を読む → 自分で分析 | 「AIとマーケ調べて」と言うだけ |
-| **検索** | 1クエリずつ手動実行 | 4〜6クエリを Subagent で**並列実行** |
-| **ノイズ処理** | なし（韓国語/ポルトガル語等がそのまま混入） | 言語自動検出で除去（日本語はひらがな/カタカナで保護） |
-| **出力** | ツイートの羅列（JSON） | 構造化レポート: 話題分類 → キーパーソン → アクションプラン → バズTOP10 → 数値サマリー |
-| **分析** | なし | トピック自動分類、バズ効率、保存率、キーパーソン抽出 |
-| **品質管理** | なし | Review Agent が MD の重複・崩れ・ノイズ混入をチェック |
-| **アーキテクチャ** | 単体 CLI | Coordinator（Opus）→ Subagent（Sonnet）→ Review Agent の 3層構成 |
+```
+reports/2026-02-20/manus-世論調査/
+├── manus-世論調査.md      ← 全体概要・戦略サマリー・バズTOP10・キーパーソン
+└── manus-世論調査.xlsx    ← 全ツイート一覧・アカウント別・投稿タイプ別
+```
 
-## 必要なもの
+## アーキテクチャ
 
-| 項目 | 説明 |
-|------|------|
-| **X API Bearer Token** | [X Developer Portal](https://developer.x.com) で取得。pay-per-use（従量課金）方式 |
-| **Bun** | TypeScript ランタイム。[bun.sh](https://bun.sh) からインストール |
-| **Python 3.9+** | レポート生成スクリプト用。openpyxl は自動インストールされる |
-| **Claude Code** | [claude.ai/claude-code](https://claude.ai/claude-code) — スキルとして利用 |
+Coordinator（Opus）+ Subagent（Sonnet）の Agent Team 方式。**Opus は本当に必要な3箇所のみ。**
 
-> **API キーについて:** このリポジトリに API キーは含まれていません。
-> Bearer Token は環境変数 `X_BEARER_TOKEN` で設定してください（後述）。
-> `.env` ファイルや認証情報を **絶対にコミットしないでください**。
+```
+Phase 1  ヒアリング（方向性・期間・言語）
+Phase 2  クエリ分解 ⚡Opus（1〜3クエリ、表記ゆれOR網羅）
+Phase 3  並列検索（Sonnet × N 同時実行）
+Phase 4  フォールバック判断 ⚡Opus（結果ベースで0〜2クエリ追加）
+Phase 5  X記事タイトル取得（必要時のみ、Chrome MCP経由）
+Phase 6  レポート生成(Sonnet) ‖ 全体概要・戦略サマリー執筆 ⚡Opus ← 並列
+Phase 7  MD統合 & 口頭総括
+Phase 8  レビュー（Deep diveのみ）
+```
 
 ## セットアップ
-
-### 1. リポジトリのクローン
 
 ```bash
 # Claude Code のスキルディレクトリに配置
 mkdir -p ~/.claude/skills
 cd ~/.claude/skills
 git clone https://github.com/naoterumaker/x-skill.git x-research
-```
 
-### 2. Bun のインストール
-
-```bash
+# Bun（未インストールなら）
 curl -fsSL https://bun.sh/install | bash
-```
 
-### 3. X API Bearer Token の設定
-
-[X Developer Portal](https://developer.x.com) で Bearer Token を取得し、環境変数に設定:
-
-```bash
-# 方法A: ~/.config/env/global.env に保存（推奨）
+# X API Bearer Token
 mkdir -p ~/.config/env
-echo 'X_BEARER_TOKEN=ここにトークンを貼る' >> ~/.config/env/global.env
+echo 'X_BEARER_TOKEN=ここにトークン' >> ~/.config/env/global.env
 ```
 
-```bash
-# 方法B: シェルの環境変数に直接設定
-export X_BEARER_TOKEN="ここにトークンを貼る"
-```
+Bearer Token は [X Developer Portal](https://developer.x.com) で取得。従量課金（$0.005/post read）。
 
-## 使い方
-
-### 基本: CLI で直接検索
+## CLI
 
 ```bash
 export PATH="$HOME/.bun/bin:$PATH"
-cd ~/.claude/skills/x-research
-source ~/.config/env/global.env
+cd ~/.claude/skills/x-research && source ~/.config/env/global.env
 
-# キーワード検索（いいね順）
-bun run x-search.ts search "AI マーケティング" --sort likes --limit 15
+# 検索（いいね順）
+bun run x-search.ts search "AI マーケティング" --sort likes --since 7d
 
-# クイック検索（1ページ、ノイズフィルタ付き）
+# クイック検索
 bun run x-search.ts search "Claude Code" --quick
 
-# 特定ユーザーの投稿
-bun run x-search.ts profile username
-
-# スレッド全文取得
-bun run x-search.ts thread TWEET_ID
-
 # JSON出力（レポート生成用）
-bun run x-search.ts search "query" --sort likes --limit 15 --json > /tmp/result.json
+bun run x-search.ts search "query" --json > /tmp/result.json
+
+# プロフィール・スレッド・単体ツイート
+bun run x-search.ts profile username
+bun run x-search.ts thread TWEET_ID
+bun run x-search.ts tweet TWEET_ID
+
+# API使用量
+bun run x-search.ts usage
 ```
 
-### 検索オプション
-
-```
---sort likes|impressions|retweets|recent   ソート順（デフォルト: likes）
---since 1h|3h|12h|1d|7d                    期間フィルタ（デフォルト: 7日）
---min-likes N                              最低いいね数フィルタ
---pages N                                  取得ページ数 1-5（100件/ページ）
---limit N                                  表示件数（デフォルト: 15）
---quick                                    クイックモード
---from <username>                          from:username のショートハンド
---quality                                  低エンゲージメント除去（いいね≥10）
---no-replies                               リプライ除外
---json                                     JSON出力
---save                                     ファイル保存
---markdown                                 Markdown形式で保存
-```
-
-### Agent Team リサーチ（メインワークフロー）
-
-Claude Code 上で自然言語で依頼すると、Agent Team が自動で動く:
-
-```
-User: "AIとマーケの掛け算でXリサーチして"
-```
-
-**処理フロー:**
-
-1. **Phase 1** — Coordinator（Opus）がテーマを 4〜6 クエリに分解
-2. **Phase 2** — Subagent（Sonnet）が全クエリを並列検索 → JSON保存
-3. **Phase 3** — マージ & 自動ノイズ除去（韓国語/ポルトガル語/スペイン語/アラビア語を検出）
-4. **Phase 4** — X記事タイトル取得（必要時のみ、Chrome MCP経由）
-5. **Phase 5** — `generate_summary_md.py` で Markdown + xlsx レポート生成
-6. **Phase 6** — Review Agent（Sonnet）が MD の品質チェック
-
-### レポート生成スクリプト（generate_summary_md.py）
-
-検索結果の JSON から、バズ分析レポートを自動生成:
-
-```bash
-python3 generate_summary_md.py \
-  --name "AI×マーケティング バズ分析" \
-  --files /tmp/ai-mkt-core.json /tmp/ai-mkt-tools.json /tmp/ai-mkt-sns.json \
-  --labels "AIマーケ基本" "AI×ツール" "AI×SNS" \
-  --queries '"AIマーケ" OR "AI マーケティング"' '"ChatGPT マーケ"' '"AI SNS"'
-```
-
-**オプション:**
+### 主要オプション
 
 | オプション | 説明 |
 |-----------|------|
-| `--name` | レポートタイトル（必須） |
-| `--files` | JSON ファイルパス（複数可、必須） |
-| `--labels` | 各ファイルのラベル名 |
-| `--queries` | 検索クエリ文字列（レポートに表示） |
-| `--exclude` | 除外するツイート ID（手動ノイズ除去） |
-| `--titles` | X記事タイトルの JSON マッピング |
-| `--topics` | カスタム TOPIC_RULES の JSON ファイル |
-| `--no-noise-filter` | 自動ノイズ除去を無効化 |
-| `--out-dir` | 出力先ディレクトリ |
-| `--no-xlsx` | xlsx 出力をスキップ |
+| `--sort likes\|impressions\|retweets\|recent` | ソート順（デフォルト: likes） |
+| `--since 1h\|3h\|12h\|1d\|7d` | 期間（デフォルト: 7d） |
+| `--quick` | 1ページ・10件・ノイズフィルタ・1hキャッシュ |
+| `--json` | JSON出力 |
+| `--analyze --xlsx` | 分析付きxlsx出力 |
+| `--min-likes N` | 最低いいね数フィルタ |
+| `--pages N` | 取得ページ数 1-5（100件/ページ） |
 
-**レポート出力内容:**
-
-1. **何が語られているか** — トピック別いいね合計 + 代表ツイート例
-2. **キーパーソン** — アカウント別プロファイル（話題・投稿タイプ・サンプル）
-3. **次にやるべきこと** — 5 項目のアクションプラン
-4. **バズ TOP10** — 全文・タグ・バズ効率・ポスト URL
-5. **数値サマリー** — クエリ一覧 + 全体指標テーブル
-6. **保存されるコンテンツ** — 保存率 TOP5（実用系）
-7. **外部リンク** — 共有された URL 集
-
-### 話題検出のカスタマイズ
-
-デフォルトの TOPIC_RULES（マーケ向け）:
-
-```
-LP/Web制作, SEO/検索流入, AI活用/テック, コンテンツ制作,
-AI副業/収益化, ビジネス/起業, 𝕏攻略/SNS, 広告/集客, 速報/ニュース
-```
-
-テーマに応じてカスタムルールを JSON で渡せる:
+## レポート生成
 
 ```bash
-# topics.json
-[
-  {"name": "LP/Web制作", "keywords": ["lp", "ランディング", "figma", "html"]},
-  {"name": "SEO", "keywords": ["seo", "検索", "google", "organic"]},
-  {"name": "AI活用", "keywords": ["claude", "chatgpt", "ai", "プロンプト"]}
-]
-
-python3 generate_summary_md.py --topics topics.json --name "..." --files ...
+python3 generate_summary_md.py \
+  --name "テーマ名 バズ分析" \
+  --files /tmp/a.json /tmp/b.json \
+  --labels "ラベルA" "ラベルB" \
+  --queries "クエリA" "クエリB"
 ```
 
-## API コスト
+**MD出力セクション:** 全体概要 → 戦略サマリー → 何が語られているか → キーパーソン → アクションプラン → バズTOP10 → 数値サマリー → 保存率TOP5 → 外部リンク
 
-X API は従量課金（2026年2月時点）:
+## X API の現実
 
-| リソース | コスト |
-|---------|-------|
-| Post read | $0.005 |
-| User lookup | $0.010 |
+- `min_faves` / `min_likes` は API v2 で **使えない**
+- `sort_order=relevancy` はいいね順 **ではない**
+- `max_results=100` 未満でバズが **全滅** する
+- relevancy は **ページネーション不可**（1クエリ最大100件）
+- 表記ゆれで結果が **130倍** 変わる
 
-| 操作 | 推定コスト |
-|------|-----------|
-| Quick 検索（1ページ） | ~$0.50 |
-| 標準リサーチ（3-4クエリ） | ~$1.50-2.00 |
-| Deep dive（5-6クエリ） | ~$3.00-5.00 |
-| キャッシュ済みの再検索 | 無料 |
+対策: `max_results=100` 固定、表記ゆれ OR 網羅、7d → 3d フォールバック。詳細は `references/x-api.md`。
 
-キャッシュ（15分 TTL、Quick モードは 1時間）により重複リクエストを回避。
+## コスト
 
-## ファイル構成
+| スコープ | クエリ数 | 推定コスト |
+|---------|---------|-----------|
+| Quick scan | 1 | ~$0.50 |
+| Standard | 1-3 | ~$0.50-1.50 |
+| + フォールバック | +1-2 | ~$1.00-2.50 |
+
+## 構成
 
 ```
-x-skill/
-├── SKILL.md                    # スキル定義（Claude が読む）
-├── x-search.ts                 # CLI エントリポイント（Bun で実行）
+├── SKILL.md                  ← Claude Code スキル定義
+├── x-search.ts               ← CLI
+├── generate_summary_md.py    ← MD + xlsx レポート生成
 ├── lib/
-│   ├── api.ts                  # X API ラッパー
-│   ├── cache.ts                # ファイルキャッシュ（15分 TTL）
-│   ├── format.ts               # Markdown フォーマッタ
-│   ├── cost.ts                 # API コスト追跡
-│   ├── analyze.ts              # エンゲージメント分析
-│   └── xlsx.ts                 # xlsx エクスポート
-├── generate_summary_md.py      # MD + xlsx バズ分析（メイン）
-├── xlsx_export.py              # xlsx 生成ユーティリティ
-├── data/
-│   ├── watchlist.example.json  # ウォッチリスト例
-│   └── cache/                  # 検索キャッシュ（自動管理）
+│   ├── api.ts                ← X API v2 wrapper
+│   ├── analyze.ts            ← エンゲージメント分析
+│   ├── cache.ts              ← 15分TTLキャッシュ
+│   ├── cost.ts               ← コスト追跡
+│   ├── format.ts             ← フォーマッタ
+│   └── xlsx.ts               ← xlsx export
 ├── references/
-│   └── x-api.md                # X API リファレンス
-└── reports/                    # レポート出力先（git 管理外）
-    └── YYYY-MM-DD/
+│   ├── x-api.md              ← API リファレンス + 実測制約
+│   ├── workflow.md           ← Agent Team ワークフロー詳細
+│   ├── cli-reference.md      ← CLI 全コマンド
+│   └── report-guide.md       ← レポート生成ガイド
+└── data/
+    ├── watchlist.json         ← 監視アカウント
+    └── cache/                 ← 自動管理
 ```
 
 ## クレジット
 
-[rohunvora/x-research-skill](https://github.com/rohunvora/x-research-skill) の X API ラッパー・キャッシュ・コスト表示をベースに構築。原作のライセンス（MIT）に基づき公開。原作者に感謝。
-
-## ライセンス
-
-MIT — Original work by [rohunvora](https://github.com/rohunvora/x-research-skill)
+[rohunvora/x-research-skill](https://github.com/rohunvora/x-research-skill) をベースに構築。原作の MIT ライセンスに基づく。
