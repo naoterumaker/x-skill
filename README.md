@@ -50,6 +50,18 @@ echo 'X_BEARER_TOKEN=ここにトークン' >> ~/.config/env/global.env
 
 Bearer Token は [X Developer Portal](https://developer.x.com) で取得。従量課金（$0.005/post read）。
 
+### 任意: Hermes Tweet の公開コンテキスト
+
+Hermes Agent から使う場合は、[Hermes Tweet](https://github.com/Xquik-dev/hermes-tweet) を公開 X/Twitter コンテキスト用の補助ソースとして併用できます。既存の `X_BEARER_TOKEN` ベースの CLI を主経路のままにし、ツイート URL、スレッド、ユーザー、キーワードの公開情報を確認したい時だけ Hermes Tweet の read tool を呼び出します。
+
+```bash
+export XQUIK_API_KEY="..."
+# 投稿やアクションを許可しない場合は設定しない
+# export HERMES_TWEET_ENABLE_ACTIONS=true
+```
+
+`HERMES_TWEET_ENABLE_ACTIONS` を未設定のままにすると、Hermes Tweet は読み取り補助として扱えます。
+
 ## CLI
 
 ```bash
