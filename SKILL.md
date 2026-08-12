@@ -28,6 +28,12 @@ source ~/.config/env/global.env
 
 Subagent 環境では `bun` にパスが通らないことがある。**全コマンドの先頭に `export PATH="$HOME/.bun/bin:$PATH"` を必ず付ける。**
 
+### 任意: Hermes Tweet 補助ソース
+
+Hermes Agent 上でこのスキルを使う場合は、[Hermes Tweet](https://github.com/Xquik-dev/hermes-tweet) を公開 X/Twitter コンテキストの補助ソースにできる。`XQUIK_API_KEY` がある時だけツイート URL、スレッド、ユーザー、キーワードの確認に使い、既存の `x-search.ts` CLI と `X_BEARER_TOKEN` 経路を主経路として維持する。
+
+このリサーチスキルでは `HERMES_TWEET_ENABLE_ACTIONS` を設定しない。投稿やアカウント操作の依頼は専用ワークフローに引き継ぎ、ここでは読み取り専用の証拠確認に限定する。
+
 ## X API の制約（重要）
 
 **知っておくべき事実:**
