@@ -56,11 +56,9 @@ Hermes Agent から使う場合は、[Hermes Tweet](https://github.com/Xquik-dev
 
 ```bash
 export XQUIK_API_KEY="..."
-# 投稿やアクションを許可しない場合は設定しない
-# export HERMES_TWEET_ENABLE_ACTIONS=true
 ```
 
-`HERMES_TWEET_ENABLE_ACTIONS` を未設定のままにすると、Hermes Tweet は読み取り補助として扱えます。
+このリサーチスキルでは `HERMES_TWEET_ENABLE_ACTIONS` を設定しません。投稿やアカウント操作は専用ワークフローに引き継いでください。
 
 ## CLI
 

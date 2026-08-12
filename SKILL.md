@@ -32,7 +32,7 @@ Subagent 環境では `bun` にパスが通らないことがある。**全コ�
 
 Hermes Agent 上でこのスキルを使う場合は、[Hermes Tweet](https://github.com/Xquik-dev/hermes-tweet) を公開 X/Twitter コンテキストの補助ソースにできる。`XQUIK_API_KEY` がある時だけツイート URL、スレッド、ユーザー、キーワードの確認に使い、既存の `x-search.ts` CLI と `X_BEARER_TOKEN` 経路を主経路として維持する。
 
-`HERMES_TWEET_ENABLE_ACTIONS` は、ユーザーが投稿やアクションを明示的に求めた時だけ `true` にする。通常のリサーチでは未設定のままにして、読み取り専用の証拠確認に限定する。
+このリサーチスキルでは `HERMES_TWEET_ENABLE_ACTIONS` を設定しない。投稿やアカウント操作の依頼は専用ワークフローに引き継ぎ、ここでは読み取り専用の証拠確認に限定する。
 
 ## X API の制約（重要）
 
